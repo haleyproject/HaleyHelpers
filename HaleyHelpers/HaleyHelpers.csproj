@@ -14,8 +14,8 @@
     <PackageId>Haley.Helpers</PackageId>
     <Version>$(HaleyHelpersVersion)</Version>
     <AssemblyName>Haley.Helpers</AssemblyName>
-    <PackageProjectUrl>https://github.com/rmsmech/HaleyHelpers</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/rmsmech/HaleyHelpers</RepositoryUrl>
+    <PackageProjectUrl>$(ProjectBaseUrl)Helpers</PackageProjectUrl>
+    <RepositoryUrl>$(ProjectBaseUrl)Helpers</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 	  <IncludeSymbols>true</IncludeSymbols>
 	  <SymbolPackageFormat>snupkg</SymbolPackageFormat>
