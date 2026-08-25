@@ -1,5 +1,10 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-  <Import Project="..\..\HaleyProject\HaleyVersion.Props" />
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <HaleyProject Condition="'$(HaleyProject)' == ''">$(MSBuildProjectDirectory)\..\..</HaleyProject>
+  </PropertyGroup>
+  <Import Project="$(HaleyProject)\HaleyProject\Haley.Source.Props" />
+  <Import Project="$(HaleyProject)\HaleyProject\Haley.Version.Props" />
+  <Import Project="$(HaleyProject)\HaleyProject\Haley.Paths.Props" />
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <SignAssembly>true</SignAssembly>
@@ -63,12 +68,10 @@
     <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
     <PackageReference Include="System.ValueTuple" Version="4.6.2" />
   </ItemGroup>
-
-<Import Project="$(SolutionDir)ProjectReferences_$(SolutionName).txt" Condition="Exists('$(SolutionDir)ProjectReferences_$(SolutionName).txt')" />
 	<!--<Choose>
-    <When Condition="Exists($(HaleyAbstractions))">
+    <When Condition="Exists('$(HaleyAbstractionsProj)')">
       <ItemGroup>
-        <ProjectReference Include="$(HaleyAbstractions)\HaleyAbstractions.csproj">
+        <ProjectReference Include="$(HaleyAbstractionsProj)">
           <Name>HaleyAbstractions</Name>
         </ProjectReference>
       </ItemGroup>
@@ -81,9 +84,9 @@
 	</Choose>-->
 	
 	<Choose>
-    <When Condition="Exists($(HaleyExtensions))">
+    <When Condition="Exists('$(HaleyExtensionsProj)')">
       <ItemGroup>
-        <ProjectReference Include="$(HaleyExtensions)\HaleyExtensions.csproj">
+        <ProjectReference Include="$(HaleyExtensionsProj)">
           <Name>HaleyExtensions</Name>
         </ProjectReference>
       </ItemGroup>
