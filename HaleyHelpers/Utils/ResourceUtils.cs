@@ -170,10 +170,15 @@ namespace Haley.Utils {
                 builder.AddJsonFile(finalFilePath);
             }
 
-            // Environment variables are added after JSON so they have higher precedence.
-            // The provider also maps double underscores to section delimiters, for example:
-            // Kida__Admin__PasswordHash -> Kida:Admin:PasswordHash.
-            builder.AddEnvironmentVariables();
+            // Overlay only meaningful environment values. Empty container placeholders
+            // must not erase valid JSON settings such as the default database adapter.
+            var environmentValues = new ConfigurationBuilder()
+                .AddEnvironmentVariables()
+                .Build()
+                .AsEnumerable()
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.Value) && entry.Value != "\"\"")
+                .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase);
+            builder.AddInMemoryCollection(environmentValues);
             return builder.Build();
         }
     }
