@@ -349,3 +349,6 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 /_RESOURCES/dss.dbs.bak
+
+# Local verification build outputs
+.buildverify/
