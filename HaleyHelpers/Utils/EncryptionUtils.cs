@@ -19,7 +19,7 @@ using System.Text.Json.Nodes;
 
 namespace Haley.Utils
 {
-    public static class EncryptionUtils
+    public static partial class EncryptionUtils
     {
         #region Nested
         public static class Symmetric {
@@ -164,7 +164,7 @@ namespace Haley.Utils
 
 
         }
-        public static class ASymmetric {
+        public static partial class ASymmetric {
             public static (string public_key, string private_key) GetXMLKeyPair() {
                 try {
                     return EncryptionHelper.RSA.GetXMLKeyPair();
