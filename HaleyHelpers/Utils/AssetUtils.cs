@@ -39,7 +39,7 @@ using System.Runtime.CompilerServices;
 
 namespace Haley.Utils
 {
-    public static class AssetUtils
+    public static partial class AssetUtils
     {
         static (AssetType type,string prop) GetAssetInfo (AssetIdentifier target) {
             switch (target) {

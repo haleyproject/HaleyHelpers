@@ -356,7 +356,38 @@ namespace Haley.Utils
                     };
                     sequence.ThrowIfNotEmpty();
                     reader.ThrowIfNotEmpty();
+                    return NormalizePrivateParameters(parameters);
+                }
+
+                private static RSAParameters NormalizePrivateParameters(RSAParameters parameters)
+                {
+                    var modulusLength = parameters.Modulus?.Length
+                        ?? throw new FormatException("The RSA private key does not contain a modulus.");
+                    var factorLength = (modulusLength + 1) / 2;
+                    parameters.D = PadUnsignedInteger(parameters.D, modulusLength);
+                    parameters.P = PadUnsignedInteger(parameters.P, factorLength);
+                    parameters.Q = PadUnsignedInteger(parameters.Q, factorLength);
+                    parameters.DP = PadUnsignedInteger(parameters.DP, factorLength);
+                    parameters.DQ = PadUnsignedInteger(parameters.DQ, factorLength);
+                    parameters.InverseQ = PadUnsignedInteger(parameters.InverseQ, factorLength);
                     return parameters;
+                }
+
+                private static byte[] PadUnsignedInteger(byte[]? value, int length)
+                {
+                    if (value == null || value.Length == 0 || value.Length > length)
+                    {
+                        throw new FormatException("The RSA private key contains an invalid integer.");
+                    }
+
+                    if (value.Length == length)
+                    {
+                        return value;
+                    }
+
+                    var padded = new byte[length];
+                    Buffer.BlockCopy(value, 0, padded, length - value.Length, value.Length);
+                    return padded;
                 }
 
                 private static RSAParameters ReadSubjectPublicKeyInfo(byte[] bytes)

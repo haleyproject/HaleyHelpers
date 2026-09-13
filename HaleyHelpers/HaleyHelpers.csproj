@@ -24,7 +24,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 	  <IncludeSymbols>true</IncludeSymbols>
 	  <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-	  <PackageReleaseNotes>Added reusable RSA-PSS signed-envelope preparation, validation, and trusted public-key lookup.</PackageReleaseNotes>
+	  <PackageReleaseNotes>Added purpose-agnostic deployment request, machine-evidence, signed-grant, recovery, feature, and limit helpers.</PackageReleaseNotes>
 	  <Configurations>Debug;Release;Debug_Net6</Configurations>
   </PropertyGroup>
 
