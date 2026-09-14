@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 
 namespace Haley.Models
 {
@@ -9,8 +10,8 @@ namespace Haley.Models
         public string Product { get; set; } = string.Empty;
         public string ProductVersion { get; set; } = string.Empty;
         public IReadOnlyCollection<string> Features { get; set; } = Array.Empty<string>();
-        public IReadOnlyCollection<string> AvailableLimits { get; set; } = Array.Empty<string>();
-        public IReadOnlyDictionary<string, long> TrialLimits { get; set; } = new Dictionary<string, long>();
+        public IReadOnlyDictionary<string, DeploymentLimitDefinition> Limits { get; set; } = new Dictionary<string, DeploymentLimitDefinition>();
+        public IReadOnlyDictionary<string, JsonElement> TrialLimits { get; set; } = new Dictionary<string, JsonElement>();
         public int TrialDays { get; set; }
         public int ExpiringDays { get; set; } = 30;
         public int RecoveryDays { get; set; } = 7;

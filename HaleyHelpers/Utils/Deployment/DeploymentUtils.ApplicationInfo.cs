@@ -15,18 +15,20 @@ namespace Haley.Utils
             var info = JsonSerializer.Deserialize<DeploymentApplicationInfo>(ReadBoundedText(resolved), DeploymentJson.CompactOptions)
                 ?? throw new InvalidDataException("Application information is empty.");
             if (info.AdditionalFields != null && info.AdditionalFields.Count > 0)
-                throw new InvalidDataException("Application information supports only product, version, and features.");
+                throw new InvalidDataException("Application information supports only product, version, features, and limits.");
             var normalized = NormalizeInput(new DeploymentRequestInput
             {
                 Product = info.Product,
                 ProductVersion = info.ProductVersion,
-                Features = info.Features
+                Features = info.Features,
+                Limits = info.Limits
             });
             return new DeploymentApplicationInfo
             {
                 Product = normalized.Product,
                 ProductVersion = normalized.ProductVersion,
-                Features = NormalizeCatalog(normalized.Features)
+                Features = NormalizeCatalog(normalized.Features),
+                Limits = NormalizeLimits(normalized.Limits)
             };
         }
     }

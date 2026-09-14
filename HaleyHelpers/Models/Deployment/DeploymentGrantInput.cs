@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Haley.Utils;
 
 namespace Haley.Models
@@ -11,7 +12,7 @@ namespace Haley.Models
         public string Customer { get; set; } = string.Empty;
         public MachineLockMode MachineLock { get; set; }
         public IReadOnlyDictionary<string, bool> Features { get; set; } = new Dictionary<string, bool>();
-        public IReadOnlyDictionary<string, long> Limits { get; set; } = new Dictionary<string, long>();
+        public IReadOnlyDictionary<string, JsonElement> Limits { get; set; } = new Dictionary<string, JsonElement>();
         public DateTimeOffset IssuedUtc { get; set; }
         public int ValidityDays { get; set; }
         public int GraceDays { get; set; }

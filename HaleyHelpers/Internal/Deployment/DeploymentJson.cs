@@ -16,6 +16,7 @@ namespace Haley.Internal
                 PropertyNameCaseInsensitive = false,
                 WriteIndented = writeIndented
             };
+            result.Converters.Add(new MachineFingerprintJsonConverter());
             result.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
             return result;
         }

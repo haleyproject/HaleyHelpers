@@ -35,8 +35,10 @@ namespace Haley.Utils
                 throw new ArgumentException("The issuer key name is invalid.", nameof(input.Key));
 
             var features = CopyFeatures(input.Features);
-            var limits = CopyLimits(input.Limits);
+            var limits = NormalizeLimitValues(input.Limits);
             RequireExactCatalog(request.Features, features.Keys, "feature");
+            RequireExactCatalog(request.Limits.Keys, limits.Keys, "limit");
+            ValidateLimitTypes(request.Limits, limits);
             ValidateSelectedMachineEvidence(request.MachineEvidence, input.MachineLock);
 
             var issued = input.IssuedUtc.ToUniversalTime();
@@ -59,7 +61,8 @@ namespace Haley.Utils
                 Expires = expires,
                 GraceDays = input.GraceDays,
                 Features = features,
-                Limits = limits
+                Limits = limits,
+                LimitCatalog = NormalizeLimits(request.Limits)
             };
             var json = JsonSerializer.Serialize(payload, DeploymentJson.CompactOptions);
             return EncryptionUtils.ASymmetric.Envelope.Prepare(json, input.PrivateKey, input.Key);
@@ -71,17 +74,6 @@ namespace Haley.Utils
             foreach (var item in values ?? new Dictionary<string, bool>())
             {
                 result.Add(NormalizeCode(item.Key, "feature"), item.Value);
-            }
-            return result;
-        }
-
-        private static Dictionary<string, long> CopyLimits(IReadOnlyDictionary<string, long>? values)
-        {
-            var result = new Dictionary<string, long>(StringComparer.Ordinal);
-            foreach (var item in values ?? new Dictionary<string, long>())
-            {
-                if (item.Value < 0) throw new ArgumentException("Limit values cannot be negative.", nameof(values));
-                result.Add(NormalizeCode(item.Key, "limit"), item.Value);
             }
             return result;
         }
@@ -100,6 +92,21 @@ namespace Haley.Utils
                 throw new ArgumentException("The request does not contain Lite machine evidence.");
             if (mode == MachineLockMode.Strong && evidence.Strong.Count < 2)
                 throw new ArgumentException("The request does not contain two Strong machine fingerprints.");
+        }
+
+        private static void ValidateLimitTypes(
+            IReadOnlyDictionary<string, DeploymentLimitDefinition> catalog,
+            IReadOnlyDictionary<string, JsonElement> values)
+        {
+            foreach (var item in catalog)
+            {
+                if (!values.TryGetValue(item.Key, out var selected)
+                    || !string.Equals(LimitType(item.Value.DefaultValue), LimitType(selected), StringComparison.Ordinal))
+                {
+                    throw new ArgumentException("Limit '" + item.Key + "' must use the advertised "
+                        + LimitType(item.Value.DefaultValue) + " value type.");
+                }
+            }
         }
     }
 }

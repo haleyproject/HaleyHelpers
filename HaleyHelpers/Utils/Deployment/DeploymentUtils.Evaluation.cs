@@ -27,6 +27,7 @@ namespace Haley.Utils
                 Product = normalized.Product,
                 ProductVersion = normalized.ProductVersion,
                 Features = normalized.Features,
+                Limits = normalized.Limits,
                 BaseDirectory = baseDirectory,
                 NowUtc = now
             });
@@ -44,7 +45,7 @@ namespace Haley.Utils
                     now < trialEnds ? null : "grant.trial_expired",
                     request: localRequest.Request,
                     features: KnownFeatures(normalized.Features, enabled: now < trialEnds),
-                    limits: now < trialEnds ? CopyKnownLimits(normalized.TrialLimits, normalized.AvailableLimits) : EmptyLimits(),
+                    limits: now < trialEnds ? CopyKnownLimits(normalized.TrialLimits, normalized.Limits.Keys) : EmptyLimits(),
                     graceEnds: trialEnds,
                     requestPath: localRequest.RequestPath ?? requestPath);
             }
@@ -93,7 +94,7 @@ namespace Haley.Utils
                     key: verification.Key, payload: payload, graceEnds: graceEnds, requestPath: requestPath);
 
             var features = SelectKnownFeatures(payload.Features, normalized.Features);
-            var limits = SelectKnownLimits(payload.Limits, normalized.AvailableLimits);
+            var limits = SelectKnownLimits(payload.Limits, normalized.Limits);
             var warnings = BuildWarnings(payload, normalized);
             var deployRequest = ToDeploymentRequest(payload);
             var deployDirectory = GetDeploymentDirectoryPath(baseDirectory);
@@ -131,15 +132,35 @@ namespace Haley.Utils
                 : payload.MachineLock == MachineLockMode.Strong
                     ? payload.MachineEvidence.Strong.Take(2).ToArray()
                     : Array.Empty<MachineFingerprint>();
-            foreach (var expected in expectedEvidence)
+            if (expectedEvidence.Any(item => !string.IsNullOrWhiteSpace(item.Source)))
             {
-                var current = AssetUtils.GetMachineFingerprint(expected.Source);
-                if (current == null)
+                foreach (var expected in expectedEvidence)
+                {
+                    var current = AssetUtils.GetMachineFingerprint(expected.Source);
+                    if (current == null)
+                    {
+                        return RecoveryResult(DeploymentGrantState.MachineEvidenceUnavailable, "grant.machine_evidence_unavailable",
+                            artifact, normalized, now, verification.Key, payload, deployRequest, features, limits, warnings, graceEnds, requestPath);
+                    }
+                    if (!string.Equals(current.Fingerprint, expected.Fingerprint, StringComparison.Ordinal))
+                    {
+                        return Result(DeploymentGrantState.MachineMismatch, now, "grant.machine_mismatch",
+                            verification.Key, payload, deployRequest, EmptyFeatures(normalized.Features), EmptyLimits(), warnings, graceEnds, requestPath: requestPath);
+                    }
+                }
+            }
+            else if (payload.MachineLock != MachineLockMode.None)
+            {
+                var current = AssetUtils.GetMachineEvidence(payload.MachineLock);
+                if (!current.IsAvailable)
                 {
                     return RecoveryResult(DeploymentGrantState.MachineEvidenceUnavailable, "grant.machine_evidence_unavailable",
                         artifact, normalized, now, verification.Key, payload, deployRequest, features, limits, warnings, graceEnds, requestPath);
                 }
-                if (!string.Equals(current.Fingerprint, expected.Fingerprint, StringComparison.Ordinal))
+
+                var expectedValues = expectedEvidence.Select(item => item.Fingerprint).OrderBy(item => item, StringComparer.Ordinal);
+                var currentValues = current.Fingerprints.Select(item => item.Fingerprint).OrderBy(item => item, StringComparer.Ordinal);
+                if (!expectedValues.SequenceEqual(currentValues, StringComparer.Ordinal))
                 {
                     return Result(DeploymentGrantState.MachineMismatch, now, "grant.machine_mismatch",
                         verification.Key, payload, deployRequest, EmptyFeatures(normalized.Features), EmptyLimits(), warnings, graceEnds, requestPath: requestPath);
@@ -166,17 +187,20 @@ namespace Haley.Utils
                 Product = options.Product,
                 ProductVersion = options.ProductVersion,
                 Features = options.Features,
+                Limits = options.Limits,
                 BaseDirectory = options.BaseDirectory,
                 NowUtc = options.NowUtc
             });
+            var trialLimits = NormalizeLimitValues(options.TrialLimits);
+            ValidateRuntimeLimitValues(request.Limits, trialLimits, allowMissing: true);
             return new DeploymentGrantOptions
             {
                 LicensePath = options.LicensePath?.Trim() ?? string.Empty,
                 Product = request.Product,
                 ProductVersion = request.ProductVersion,
                 Features = request.Features,
-                AvailableLimits = NormalizeCatalog(options.AvailableLimits),
-                TrialLimits = CopyLimits(options.TrialLimits),
+                Limits = request.Limits,
+                TrialLimits = trialLimits,
                 TrialDays = options.TrialDays,
                 ExpiringDays = options.ExpiringDays,
                 RecoveryDays = options.RecoveryDays,
@@ -203,7 +227,9 @@ namespace Haley.Utils
 
         private static string? ValidateGrantPayload(DeploymentGrantPayload payload, DeploymentGrantOptions options)
         {
-            if (payload.Version != SupportedVersion) return "grant.unsupported_version";
+            if (payload.Version != SupportedVersion
+                && payload.Version != OpaqueProofVersion
+                && payload.Version != PreviousVersion) return "grant.unsupported_version";
             if (string.IsNullOrWhiteSpace(payload.LicenseId) || string.IsNullOrWhiteSpace(payload.Customer)) return "grant.required_fields_missing";
             if (!string.Equals(payload.Product, options.Product, StringComparison.Ordinal)) return "grant.product_mismatch";
             if (!Guid.TryParseExact(payload.DeployId, "N", out _)) return "grant.invalid_deploy_id";
@@ -220,10 +246,17 @@ namespace Haley.Utils
             payload.Features = payload.Features == null
                 ? new Dictionary<string, bool>(StringComparer.Ordinal)
                 : new Dictionary<string, bool>(payload.Features, StringComparer.Ordinal);
-            payload.Limits = payload.Limits == null
-                ? new Dictionary<string, long>(StringComparer.Ordinal)
-                : new Dictionary<string, long>(payload.Limits, StringComparer.Ordinal);
-            if (payload.Limits.Any(item => item.Value < 0)) return "grant.invalid_limit";
+            try
+            {
+                payload.Limits = NormalizeLimitValues(payload.Limits);
+                payload.LimitCatalog = NormalizeLimits(payload.LimitCatalog);
+                if (payload.Version >= SupportedVersion)
+                {
+                    RequireExactCatalog(payload.LimitCatalog.Keys, payload.Limits.Keys, "limit");
+                    ValidateLimitTypes(payload.LimitCatalog, payload.Limits);
+                }
+            }
+            catch (ArgumentException) { return "grant.invalid_limit"; }
             return null;
         }
 
@@ -239,7 +272,9 @@ namespace Haley.Utils
                 ProductVersion = payload.ProductVersion,
                 MachineEvidence = payload.MachineEvidence,
                 Features = payload.Features.Keys.OrderBy(item => item, StringComparer.Ordinal).ToList(),
-                AvailableLimits = new List<string>()
+                Limits = payload.Version >= SupportedVersion
+                    ? NormalizeLimits(payload.LimitCatalog)
+                    : new Dictionary<string, DeploymentLimitDefinition>(StringComparer.Ordinal)
             };
         }
 
@@ -250,8 +285,13 @@ namespace Haley.Utils
                 result.Add("grant.product_version_differs");
             foreach (var feature in payload.Features.Keys.Except(options.Features, StringComparer.Ordinal))
                 result.Add("grant.unknown_feature:" + feature);
-            foreach (var limit in payload.Limits.Keys.Except(options.AvailableLimits, StringComparer.Ordinal))
+            foreach (var limit in payload.Limits.Keys.Except(options.Limits.Keys, StringComparer.Ordinal))
                 result.Add("grant.unknown_limit:" + limit);
+            foreach (var limit in payload.Limits.Keys.Intersect(options.Limits.Keys, StringComparer.Ordinal))
+            {
+                if (!string.Equals(LimitType(payload.Limits[limit]), LimitType(options.Limits[limit].DefaultValue), StringComparison.Ordinal))
+                    result.Add("grant.limit_type_differs:" + limit);
+            }
             return result;
         }
 
@@ -266,15 +306,19 @@ namespace Haley.Utils
         private static Dictionary<string, bool> EmptyFeatures(IEnumerable<string> known)
             => KnownFeatures(known, enabled: false);
 
-        private static Dictionary<string, long> SelectKnownLimits(
-            IReadOnlyDictionary<string, long> supplied, IEnumerable<string> known)
+        private static Dictionary<string, JsonElement> SelectKnownLimits(
+            IReadOnlyDictionary<string, JsonElement> supplied,
+            IReadOnlyDictionary<string, DeploymentLimitDefinition> known)
+            => known.Keys
+                .Where(item => supplied.TryGetValue(item, out var value)
+                    && string.Equals(LimitType(value), LimitType(known[item].DefaultValue), StringComparison.Ordinal))
+                .ToDictionary(item => item, item => supplied[item], StringComparer.Ordinal);
+
+        private static Dictionary<string, JsonElement> CopyKnownLimits(
+            IReadOnlyDictionary<string, JsonElement> supplied, IEnumerable<string> known)
             => known.Where(supplied.ContainsKey).ToDictionary(item => item, item => supplied[item], StringComparer.Ordinal);
 
-        private static Dictionary<string, long> CopyKnownLimits(
-            IReadOnlyDictionary<string, long> supplied, IEnumerable<string> known)
-            => SelectKnownLimits(supplied, known);
-
-        private static Dictionary<string, long> EmptyLimits() => new Dictionary<string, long>(StringComparer.Ordinal);
+        private static Dictionary<string, JsonElement> EmptyLimits() => new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 
         private static DeploymentGrantState MapRequestFailure(string? error)
         {
@@ -294,7 +338,7 @@ namespace Haley.Utils
             DeploymentGrantPayload payload,
             DeploymentRequest request,
             IReadOnlyDictionary<string, bool> features,
-            IReadOnlyDictionary<string, long> limits,
+            IReadOnlyDictionary<string, JsonElement> limits,
             IReadOnlyList<string> warnings,
             DateTimeOffset graceEnds,
             string requestPath)
@@ -344,7 +388,7 @@ namespace Haley.Utils
             DeploymentGrantPayload? payload = null,
             DeploymentRequest? request = null,
             IReadOnlyDictionary<string, bool>? features = null,
-            IReadOnlyDictionary<string, long>? limits = null,
+            IReadOnlyDictionary<string, JsonElement>? limits = null,
             IReadOnlyList<string>? warnings = null,
             DateTimeOffset? graceEnds = null,
             DateTimeOffset? recoveryEnds = null,
@@ -359,7 +403,7 @@ namespace Haley.Utils
                 Payload = payload,
                 Request = request,
                 Features = features ?? new Dictionary<string, bool>(),
-                Limits = limits ?? new Dictionary<string, long>(),
+                Limits = limits ?? new Dictionary<string, JsonElement>(),
                 Warnings = warnings ?? Array.Empty<string>(),
                 CheckedUtc = now,
                 GraceEndsUtc = graceEnds,
@@ -374,6 +418,21 @@ namespace Haley.Utils
             return Path.IsPathRooted(path)
                 ? Path.GetFullPath(path)
                 : Path.GetFullPath(Path.Combine(Path.GetFullPath(baseDirectory), path));
+        }
+
+        private static void ValidateRuntimeLimitValues(
+            IReadOnlyDictionary<string, DeploymentLimitDefinition> catalog,
+            IReadOnlyDictionary<string, JsonElement> values,
+            bool allowMissing)
+        {
+            foreach (var item in values)
+            {
+                if (!catalog.TryGetValue(item.Key, out var definition))
+                    throw new ArgumentException("Limit '" + item.Key + "' is not advertised by this product version.");
+                if (!string.Equals(LimitType(definition.DefaultValue), LimitType(item.Value), StringComparison.Ordinal))
+                    throw new ArgumentException("Limit '" + item.Key + "' does not use its advertised value type.");
+            }
+            if (!allowMissing) RequireExactCatalog(catalog.Keys, values.Keys, "limit");
         }
     }
 }

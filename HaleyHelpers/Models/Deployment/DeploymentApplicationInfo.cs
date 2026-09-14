@@ -15,6 +15,9 @@ namespace Haley.Models
         [JsonPropertyName("features")]
         public List<string> Features { get; set; } = new List<string>();
 
+        [JsonPropertyName("limits")]
+        public Dictionary<string, DeploymentLimitDefinition> Limits { get; set; } = new Dictionary<string, DeploymentLimitDefinition>();
+
         [JsonExtensionData]
         public Dictionary<string, JsonElement>? AdditionalFields { get; set; }
     }

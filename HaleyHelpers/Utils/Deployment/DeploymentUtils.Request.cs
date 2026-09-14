@@ -12,7 +12,9 @@ namespace Haley.Utils
 {
     public static partial class DeploymentUtils
     {
-        internal const int SupportedVersion = 2;
+        internal const int SupportedVersion = 4;
+        internal const int OpaqueProofVersion = 3;
+        internal const int PreviousVersion = 2;
         internal const int LegacyVersion = 1;
         internal const int MaxArtifactBytes = 256 * 1024;
         internal const string DeployDirectoryName = ".deployinfo";
@@ -30,6 +32,14 @@ namespace Haley.Utils
 
         public static DeploymentRequestResult RenewRequest(DeploymentRequestInput input)
             => PrepareRequestCore(input, renew: true);
+
+        public static DeploymentRequestResult EnsureRequest(DeploymentRequestInput input)
+        {
+            var result = PrepareRequest(input);
+            return string.Equals(result.Error, "request.renew_required", StringComparison.Ordinal)
+                ? RenewRequest(input)
+                : result;
+        }
 
         public static DeploymentRequestResult LoadRequest(DeploymentRequestInput input)
         {
@@ -141,7 +151,7 @@ namespace Haley.Utils
                         Product = normalized.Product,
                         ProductVersion = normalized.ProductVersion,
                         Features = NormalizeCatalog(normalized.Features),
-                        AvailableLimits = new List<string>(),
+                        Limits = NormalizeLimits(normalized.Limits),
                         MachineEvidence = BuildRequestEvidence()
                     };
                     var encodedRequest = JsonSerializer.Serialize(request, DeploymentJson.CompactOptions);
@@ -226,6 +236,7 @@ namespace Haley.Utils
                 Product = product,
                 ProductVersion = version,
                 Features = input.Features ?? Array.Empty<string>(),
+                Limits = NormalizeLimits(input.Limits),
                 BaseDirectory = input.BaseDirectory,
                 NowUtc = (input.NowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime()
             };
@@ -312,30 +323,35 @@ namespace Haley.Utils
 
         private static string? ValidateRequestStructure(DeploymentRequest request)
         {
-            if (request.Version != SupportedVersion && request.Version != LegacyVersion) return "request.unsupported_version";
+            if (request.Version != SupportedVersion
+                && request.Version != OpaqueProofVersion
+                && request.Version != PreviousVersion
+                && request.Version != LegacyVersion) return "request.unsupported_version";
             if (!Guid.TryParseExact(request.DeployId, "N", out _)) return "request.invalid_deploy_id";
             if (request.Created == default) return "request.created_required";
             try
             {
                 _ = NormalizeCode(request.Product, nameof(request.Product));
                 if (request.Version == LegacyVersion) _ = NormalizeCode(request.Deployment, nameof(request.Deployment));
-                if (request.Version == SupportedVersion && !string.Equals(request.Deployment, request.DeployId, StringComparison.Ordinal))
+                if (request.Version >= PreviousVersion && !string.Equals(request.Deployment, request.DeployId, StringComparison.Ordinal))
                     return "request.deployment_mismatch";
                 _ = NormalizeText(request.ProductVersion, nameof(request.ProductVersion), 64);
                 request.Features = NormalizeCatalog(request.Features);
-                request.AvailableLimits = NormalizeCatalog(request.AvailableLimits);
-                ValidateEvidence(request.MachineEvidence);
+                request.Limits = NormalizeLimits(request.Limits);
+                if (request.LegacyAvailableLimits != null)
+                    request.LegacyAvailableLimits = NormalizeCatalog(request.LegacyAvailableLimits);
+                ValidateEvidence(request.MachineEvidence, request.Version);
             }
             catch (ArgumentException) { return "request.invalid_fields"; }
             return null;
         }
 
-        private static void ValidateEvidence(MachineEvidence? evidence)
+        private static void ValidateEvidence(MachineEvidence? evidence, int version)
         {
             if (evidence == null) throw new ArgumentException("Machine evidence is required.");
             foreach (var item in evidence.Lite.Concat(evidence.Strong))
             {
-                _ = NormalizeCode(item.Source, nameof(item.Source));
+                if (version < OpaqueProofVersion) _ = NormalizeCode(item.Source, nameof(item.Source));
                 if (string.IsNullOrWhiteSpace(item.Fingerprint) || item.Fingerprint.SafeBase64Decode().Length != 32)
                     throw new ArgumentException("Machine fingerprint is invalid.");
             }
@@ -417,7 +433,8 @@ namespace Haley.Utils
         {
             return request.Version == SupportedVersion
                 && string.Equals(request.ProductVersion, input.ProductVersion, StringComparison.Ordinal)
-                && request.Features.SequenceEqual(NormalizeCatalog(input.Features), StringComparer.Ordinal);
+                && request.Features.SequenceEqual(NormalizeCatalog(input.Features), StringComparer.Ordinal)
+                && LimitCatalogMatches(request.Limits, NormalizeLimits(input.Limits));
         }
 
         private static List<string> NormalizeCatalog(IEnumerable<string>? values)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace Haley.Models
 {
@@ -36,8 +37,19 @@ namespace Haley.Models
         [JsonPropertyName("machineLock")]
         public MachineLockMode MachineLock { get; set; }
 
-        [JsonPropertyName("machineEvidence")]
+        [JsonPropertyName("proof")]
         public MachineEvidence MachineEvidence { get; set; } = new MachineEvidence();
+
+        [JsonPropertyName("machineEvidence")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public MachineEvidence? LegacyMachineEvidence
+        {
+            get => null;
+            set
+            {
+                if (value != null) MachineEvidence = value;
+            }
+        }
 
         [JsonPropertyName("issued")]
         public DateTimeOffset Issued { get; set; }
@@ -55,6 +67,9 @@ namespace Haley.Models
         public Dictionary<string, bool> Features { get; set; } = new Dictionary<string, bool>(StringComparer.Ordinal);
 
         [JsonPropertyName("limits")]
-        public Dictionary<string, long> Limits { get; set; } = new Dictionary<string, long>(StringComparer.Ordinal);
+        public Dictionary<string, JsonElement> Limits { get; set; } = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+        [JsonPropertyName("limitCatalog")]
+        public Dictionary<string, DeploymentLimitDefinition> LimitCatalog { get; set; } = new Dictionary<string, DeploymentLimitDefinition>(StringComparer.Ordinal);
     }
 }

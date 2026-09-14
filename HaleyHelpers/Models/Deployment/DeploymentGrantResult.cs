@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 
 namespace Haley.Models
 {
@@ -12,7 +13,7 @@ namespace Haley.Models
         public DeploymentGrantPayload? Payload { get; internal set; }
         public DeploymentRequest? Request { get; internal set; }
         public IReadOnlyDictionary<string, bool> Features { get; internal set; } = new Dictionary<string, bool>();
-        public IReadOnlyDictionary<string, long> Limits { get; internal set; } = new Dictionary<string, long>();
+        public IReadOnlyDictionary<string, JsonElement> Limits { get; internal set; } = new Dictionary<string, JsonElement>();
         public IReadOnlyList<string> Warnings { get; internal set; } = Array.Empty<string>();
         public DateTimeOffset CheckedUtc { get; internal set; }
         public DateTimeOffset? GraceEndsUtc { get; internal set; }

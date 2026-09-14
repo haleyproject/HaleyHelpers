@@ -27,10 +27,25 @@ namespace Haley.Models
         [JsonPropertyName("features")]
         public List<string> Features { get; set; } = new List<string>();
 
+        [JsonPropertyName("limits")]
+        public Dictionary<string, DeploymentLimitDefinition> Limits { get; set; } = new Dictionary<string, DeploymentLimitDefinition>(StringComparer.Ordinal);
+
         [JsonPropertyName("availableLimits")]
-        public List<string> AvailableLimits { get; set; } = new List<string>();
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<string>? LegacyAvailableLimits { get; set; }
+
+        [JsonPropertyName("proof")]
+        public MachineEvidence MachineEvidence { get; set; } = new MachineEvidence();
 
         [JsonPropertyName("machineEvidence")]
-        public MachineEvidence MachineEvidence { get; set; } = new MachineEvidence();
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public MachineEvidence? LegacyMachineEvidence
+        {
+            get => null;
+            set
+            {
+                if (value != null) MachineEvidence = value;
+            }
+        }
     }
 }

@@ -89,5 +89,18 @@ namespace Haley.Utils
             }
             return result;
         }
+
+        public static long GetUserLongValue(string message, long defaultValue = 0, long minimum = 0, long maximum = long.MaxValue) {
+            while (true) {
+                AddLine();
+                Console.WriteLine(message);
+                var value = Console.ReadLine();
+                if (string.IsNullOrWhiteSpace(value)) return defaultValue;
+                if (long.TryParse(value.Trim(), out var result) && result >= minimum && result <= maximum) {
+                    return result;
+                }
+                Console.WriteLine($"Invalid input. Enter a whole number from {minimum} to {maximum}.");
+            }
+        }
     }
 }

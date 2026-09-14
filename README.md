@@ -8,6 +8,7 @@ for web pages and printing; PNG bytes are suitable for files and HTTP responses.
 
 ```csharp
 using Haley.Utils;
+using System.Text.Json;
 
 var svg = QrCodeBuilder.CreateSvg("https://example.com/view/signed-token");
 var png = QrCodeBuilder.CreatePng("https://example.com/view/signed-token");
@@ -23,11 +24,24 @@ Deployment identity and available machine evidence are generated locally:
 using Haley.Models;
 using Haley.Utils;
 
-var request = DeploymentUtils.PrepareRequest(new DeploymentRequestInput
+var request = DeploymentUtils.EnsureRequest(new DeploymentRequestInput
 {
     Product = "sample.product",
     ProductVersion = "1.4.0",
     Features = new[] { "documents.read", "documents.write" },
+    Limits = new Dictionary<string, DeploymentLimitDefinition>
+    {
+        ["tenant.max"] = new DeploymentLimitDefinition
+        {
+            DefaultValue = JsonSerializer.SerializeToElement(5L),
+            Description = "Maximum active tenants"
+        },
+        ["edition"] = new DeploymentLimitDefinition
+        {
+            DefaultValue = JsonSerializer.SerializeToElement("standard"),
+            Description = "Configured product edition"
+        }
+    },
     BaseDirectory = AppContext.BaseDirectory
 });
 
@@ -36,19 +50,35 @@ var result = DeploymentUtils.EvaluateGrant(new DeploymentGrantOptions
     LicensePath = "",
     Product = "sample.product",
     ProductVersion = "1.4.0",
-    Features = new[] { "documents.read", "documents.write" },
-    AvailableLimits = new[] { "tenant.max" },
-    TrialLimits = new Dictionary<string, long> { ["tenant.max"] = 1 },
+    Features = request.Request!.Features,
+    Limits = request.Request.Limits,
+    TrialLimits = new Dictionary<string, JsonElement>
+    {
+        ["tenant.max"] = JsonSerializer.SerializeToElement(1L),
+        ["edition"] = JsonSerializer.SerializeToElement("trial")
+    },
     TrialDays = 14,
     BaseDirectory = AppContext.BaseDirectory
 });
 ```
 
-The first call creates `.deployinfo/deploy.pem`, `deploy.pub`, `deployment.json`, and
+`EnsureRequest` is the normal application-startup operation. It creates
+`.deployinfo/deploy.pem`, `deploy.pub`, `deployment.json`, and
 `sample.product.request`. Persist that directory and send only the `.request` file to the issuer. Private deployment
 keys and raw machine identifiers never leave the deployment; only domain-separated
-SHA-256 fingerprints appear in the request. `RenewRequest` refreshes version, catalog,
-and evidence while preserving the random deployment ID and keypair. The issuer alone
-selects `None`, `Lite`, or `Strong`, feature decisions, numeric limits, validity, and grace.
+SHA-256 fingerprints appear only under a generic `proof` object as opaque arrays in the request. Hardware source names are
+not serialized. When the request format, application version, or advertised catalog
+changes, `EnsureRequest` renews the request while preserving the random deployment ID
+and keypair. Corrupt or partially missing deployment state is not silently replaced.
+`PrepareRequest` and `RenewRequest` remain available to operator tooling. The issuer alone
+selects `None`, `Lite`, or `Strong`, feature decisions, opaque limit values, validity, and grace.
 `EvaluateGrant` never creates an identity or request. An empty license path resolves to
 `.deployinfo/license.lic`; a non-empty path is authoritative.
+
+Each product version advertises the limit keys it understands, a short description, and
+a suggested default. A primitive default also declares the value type: boolean,
+non-negative whole number, or string. The default is guidance for the issuer, not an
+automatic entitlement. Issuance must choose one correctly typed value for every
+advertised key. Haley signs and transports those values without interpreting their
+product meaning; the target consumes only keys in its own catalog and ignores unknown
+signed limits from another or newer product version.
