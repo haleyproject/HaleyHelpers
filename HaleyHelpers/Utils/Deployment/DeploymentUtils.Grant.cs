@@ -17,6 +17,8 @@ namespace Haley.Utils
                 throw new ArgumentException("The deployment request is invalid (" + (decoded.Error ?? "request.invalid") + ").", nameof(input));
 
             var request = decoded.Request;
+            if (request.Version != SupportedVersion)
+                throw new ArgumentException("The deployment request must be renewed before a grant can be issued.", nameof(input));
             var licenseId = NormalizeCode(input.LicenseId, nameof(input.LicenseId));
             var customer = NormalizeText(input.Customer, nameof(input.Customer), 200);
             if (!Enum.IsDefined(typeof(MachineLockMode), input.MachineLock))
@@ -35,7 +37,6 @@ namespace Haley.Utils
             var features = CopyFeatures(input.Features);
             var limits = CopyLimits(input.Limits);
             RequireExactCatalog(request.Features, features.Keys, "feature");
-            RequireExactCatalog(request.AvailableLimits, limits.Keys, "limit");
             ValidateSelectedMachineEvidence(request.MachineEvidence, input.MachineLock);
 
             var issued = input.IssuedUtc.ToUniversalTime();
@@ -47,7 +48,7 @@ namespace Haley.Utils
                 Product = request.Product,
                 ProductVersion = request.ProductVersion,
                 Customer = customer,
-                Deployment = request.Deployment,
+                Deployment = request.DeployId,
                 DeployId = request.DeployId,
                 RequestCreated = request.Created,
                 DeployPrint = JsonSerializer.Deserialize<RequestEnvelope>(input.RequestEnvelope, DeploymentJson.CompactOptions)!.DeployPrint,

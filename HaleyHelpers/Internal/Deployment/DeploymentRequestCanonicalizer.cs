@@ -15,9 +15,22 @@ namespace Haley.Internal
             Append(builder, request.Version.ToString(CultureInfo.InvariantCulture));
             Append(builder, request.DeployId);
             Append(builder, request.Created.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
-            Append(builder, request.Deployment);
-            Append(builder, request.Product);
-            Append(builder, request.ProductVersion);
+
+            if (request.Version > 1)
+            {
+                Append(builder, request.Product);
+                Append(builder, request.ProductVersion);
+                foreach (var feature in request.Features.OrderBy(item => item, StringComparer.Ordinal))
+                {
+                    Append(builder, feature);
+                }
+            }
+            else
+            {
+                Append(builder, request.Deployment);
+                Append(builder, request.Product);
+                Append(builder, request.ProductVersion);
+            }
 
             foreach (var item in Enumerate(request.MachineEvidence))
             {

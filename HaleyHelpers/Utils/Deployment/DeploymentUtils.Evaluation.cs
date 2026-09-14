@@ -20,16 +20,13 @@ namespace Haley.Utils
             var baseDirectory = string.IsNullOrWhiteSpace(normalized.BaseDirectory)
                 ? AppContext.BaseDirectory
                 : normalized.BaseDirectory!;
-            var licensePath = ResolvePath(normalized.LicensePath, baseDirectory);
-            var requestPath = Path.Combine(GetDeploymentDirectory(baseDirectory), RequestFileName);
-            var localRequest = PrepareRequest(new DeploymentRequestInput
+            var licensePath = ResolveLicensePath(normalized.LicensePath, baseDirectory);
+            var requestPath = GetRequestPath(normalized.Product, baseDirectory);
+            var localRequest = LoadRequest(new DeploymentRequestInput
             {
                 Product = normalized.Product,
                 ProductVersion = normalized.ProductVersion,
-                Deployment = normalized.Deployment,
                 Features = normalized.Features,
-                AvailableLimits = normalized.AvailableLimits,
-                MachineEvidenceMode = normalized.RequestMachineEvidenceMode,
                 BaseDirectory = baseDirectory,
                 NowUtc = now
             });
@@ -69,7 +66,7 @@ namespace Haley.Utils
             DeploymentGrantPayload payload;
             try
             {
-                payload = JsonSerializer.Deserialize<DeploymentGrantPayload>(verification.Payload, DeploymentJson.CompactOptions)
+                payload = JsonSerializer.Deserialize<DeploymentGrantPayload>(verification.Payload!, DeploymentJson.CompactOptions)
                     ?? throw new JsonException("Grant payload is empty.");
             }
             catch (JsonException)
@@ -99,7 +96,7 @@ namespace Haley.Utils
             var limits = SelectKnownLimits(payload.Limits, normalized.AvailableLimits);
             var warnings = BuildWarnings(payload, normalized);
             var deployRequest = ToDeploymentRequest(payload);
-            var deployDirectory = GetDeploymentDirectory(baseDirectory);
+            var deployDirectory = GetDeploymentDirectoryPath(baseDirectory);
             var privatePath = Path.Combine(deployDirectory, PrivateKeyFileName);
             var publicPath = Path.Combine(deployDirectory, PublicKeyFileName);
             string? publicKey = null;
@@ -123,7 +120,7 @@ namespace Haley.Utils
                 return RecoveryResult(DeploymentGrantState.MissingVerifier, "grant.verifier_missing",
                     artifact, normalized, now, verification.Key, payload, deployRequest, features, limits, warnings, graceEnds, requestPath);
             }
-            if (!ValidateDeployPrint(deployRequest, payload.DeployPrint, publicKey))
+            if (!ValidateDeployPrint(deployRequest, payload.DeployPrint, publicKey!))
             {
                 return Result(DeploymentGrantState.InvalidDeployment, now, "grant.deployment_mismatch",
                     verification.Key, payload, deployRequest, EmptyFeatures(normalized.Features), EmptyLimits(), warnings, graceEnds, requestPath: requestPath);
@@ -161,7 +158,6 @@ namespace Haley.Utils
 
         private static DeploymentGrantOptions ValidateGrantOptions(DeploymentGrantOptions options)
         {
-            if (string.IsNullOrWhiteSpace(options.LicensePath)) throw new ArgumentException("LicensePath is required.", nameof(options));
             if (options.TrialDays < 0 || options.TrialDays > 3650) throw new ArgumentOutOfRangeException(nameof(options.TrialDays));
             if (options.ExpiringDays < 0 || options.ExpiringDays > 3650) throw new ArgumentOutOfRangeException(nameof(options.ExpiringDays));
             if (options.RecoveryDays < 0 || options.RecoveryDays > 365) throw new ArgumentOutOfRangeException(nameof(options.RecoveryDays));
@@ -169,23 +165,18 @@ namespace Haley.Utils
             {
                 Product = options.Product,
                 ProductVersion = options.ProductVersion,
-                Deployment = options.Deployment,
                 Features = options.Features,
-                AvailableLimits = options.AvailableLimits,
-                MachineEvidenceMode = options.RequestMachineEvidenceMode,
                 BaseDirectory = options.BaseDirectory,
                 NowUtc = options.NowUtc
             });
             return new DeploymentGrantOptions
             {
-                LicensePath = options.LicensePath.Trim(),
+                LicensePath = options.LicensePath?.Trim() ?? string.Empty,
                 Product = request.Product,
                 ProductVersion = request.ProductVersion,
-                Deployment = request.Deployment,
                 Features = request.Features,
-                AvailableLimits = request.AvailableLimits,
+                AvailableLimits = NormalizeCatalog(options.AvailableLimits),
                 TrialLimits = CopyLimits(options.TrialLimits),
-                RequestMachineEvidenceMode = request.MachineEvidenceMode,
                 TrialDays = options.TrialDays,
                 ExpiringDays = options.ExpiringDays,
                 RecoveryDays = options.RecoveryDays,
@@ -201,7 +192,7 @@ namespace Haley.Utils
                 return EncryptionUtils.ASymmetric.Envelope.Validate(artifact);
             try
             {
-                var path = ResolvePath(publicKeyPath.Trim(), baseDirectory);
+                var path = ResolvePath(publicKeyPath!.Trim(), baseDirectory);
                 return EncryptionUtils.ASymmetric.Envelope.Validate(artifact, ReadBoundedText(path));
             }
             catch (Exception exception) when (IsExpectedFailure(exception))
@@ -215,8 +206,8 @@ namespace Haley.Utils
             if (payload.Version != SupportedVersion) return "grant.unsupported_version";
             if (string.IsNullOrWhiteSpace(payload.LicenseId) || string.IsNullOrWhiteSpace(payload.Customer)) return "grant.required_fields_missing";
             if (!string.Equals(payload.Product, options.Product, StringComparison.Ordinal)) return "grant.product_mismatch";
-            if (!string.Equals(payload.Deployment, options.Deployment, StringComparison.Ordinal)) return "grant.deployment_mismatch";
             if (!Guid.TryParseExact(payload.DeployId, "N", out _)) return "grant.invalid_deploy_id";
+            if (!string.Equals(payload.Deployment, payload.DeployId, StringComparison.Ordinal)) return "grant.deployment_mismatch";
             if (payload.RequestCreated == default || string.IsNullOrWhiteSpace(payload.DeployPrint)) return "grant.request_proof_missing";
             if (payload.Issued == default || payload.NotBefore < payload.Issued || payload.Expires <= payload.NotBefore) return "grant.invalid_dates";
             if (payload.GraceDays < 0 || payload.GraceDays > 3650) return "grant.invalid_grace";
@@ -247,7 +238,7 @@ namespace Haley.Utils
                 Product = payload.Product,
                 ProductVersion = payload.ProductVersion,
                 MachineEvidence = payload.MachineEvidence,
-                Features = new List<string>(),
+                Features = payload.Features.Keys.OrderBy(item => item, StringComparer.Ordinal).ToList(),
                 AvailableLimits = new List<string>()
             };
         }
@@ -308,7 +299,7 @@ namespace Haley.Utils
             DateTimeOffset graceEnds,
             string requestPath)
         {
-            var directory = GetDeploymentDirectory(options.BaseDirectory);
+            var directory = GetDeploymentDirectoryPath(options.BaseDirectory);
             var recoveryPath = Path.Combine(directory, RecoveryFileName);
             var digest = artifact.ComputeHash(HashMethod.Sha256, encodeBase64: false);
             DeploymentRecoveryRecord? record = null;

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -11,17 +12,26 @@ namespace Haley.Utils
 {
     public static partial class DeploymentUtils
     {
-        internal const int SupportedVersion = 1;
+        internal const int SupportedVersion = 2;
+        internal const int LegacyVersion = 1;
         internal const int MaxArtifactBytes = 256 * 1024;
-        internal const string DeployDirectoryName = "deployinfo";
+        internal const string DeployDirectoryName = ".deployinfo";
         internal const string PrivateKeyFileName = "deploy.pem";
         internal const string PublicKeyFileName = "deploy.pub";
-        internal const string RequestFileName = "request.json";
+        internal const string LegacyRequestFileName = "request.json";
+        internal const string IdentityFileName = "deployment.json";
+        internal const string LicenseFileName = "license.lic";
         internal const string RecoveryFileName = "recovery.json";
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
         private static readonly object FileGate = new object();
 
         public static DeploymentRequestResult PrepareRequest(DeploymentRequestInput input)
+            => PrepareRequestCore(input, renew: false);
+
+        public static DeploymentRequestResult RenewRequest(DeploymentRequestInput input)
+            => PrepareRequestCore(input, renew: true);
+
+        public static DeploymentRequestResult LoadRequest(DeploymentRequestInput input)
         {
             if (input == null) throw new ArgumentNullException(nameof(input));
             try
@@ -29,15 +39,56 @@ namespace Haley.Utils
                 var normalized = NormalizeInput(input);
                 lock (FileGate)
                 {
-                    var root = GetDeploymentDirectory(normalized.BaseDirectory);
-                    Directory.CreateDirectory(root);
+                    var root = GetDeploymentDirectoryPath(normalized.BaseDirectory);
+                    var requestPath = GetRequestPath(normalized.Product, normalized.BaseDirectory);
+                    var publicPath = Path.Combine(root, PublicKeyFileName);
+                    var identityPath = Path.Combine(root, IdentityFileName);
+                    if (!File.Exists(publicPath)) return RequestFailure("request.public_key_missing", requestPath);
+                    if (!File.Exists(identityPath)) return RequestFailure("request.identity_missing", requestPath);
+                    if (!File.Exists(requestPath)) return RequestFailure("request.not_prepared", requestPath);
+
+                    var publicKey = ReadBoundedText(publicPath);
+                    var identity = ReadIdentity(identityPath, publicKey);
+                    var result = ValidateRequestEnvelope(ReadBoundedText(requestPath), publicKey);
+                    result.RequestPath = requestPath;
+                    if (!result.IsValid || result.Request == null) return result;
+                    if (result.Request.Version != SupportedVersion) return RequestFailure("request.renew_required", requestPath);
+                    if (!string.Equals(result.Request.DeployId, identity.DeployId, StringComparison.Ordinal)
+                        || !string.Equals(result.Request.Product, normalized.Product, StringComparison.Ordinal))
+                    {
+                        return RequestFailure("request.identity_conflict", requestPath);
+                    }
+                    return result;
+                }
+            }
+            catch (Exception exception) when (IsExpectedFailure(exception))
+            {
+                return RequestFailure("request.load_failed", null, exception.Message);
+            }
+        }
+
+        private static DeploymentRequestResult PrepareRequestCore(DeploymentRequestInput input, bool renew)
+        {
+            if (input == null) throw new ArgumentNullException(nameof(input));
+            try
+            {
+                var normalized = NormalizeInput(input);
+                lock (FileGate)
+                {
+                    var root = GetDeploymentDirectoryPath(normalized.BaseDirectory);
+                    var requestPath = GetRequestPath(normalized.Product, normalized.BaseDirectory);
                     var privatePath = Path.Combine(root, PrivateKeyFileName);
                     var publicPath = Path.Combine(root, PublicKeyFileName);
-                    var requestPath = Path.Combine(root, RequestFileName);
+                    var identityPath = Path.Combine(root, IdentityFileName);
+                    var legacyRequestPath = Path.Combine(root, LegacyRequestFileName);
                     var privateExists = File.Exists(privatePath);
                     var publicExists = File.Exists(publicPath);
                     var generated = false;
 
+                    if (renew && !privateExists && !publicExists)
+                        return RequestFailure("request.deployment_missing", requestPath);
+
+                    Directory.CreateDirectory(root);
                     if (!privateExists && !publicExists)
                     {
                         var pair = EncryptionUtils.ASymmetric.CreatePemKeyPair();
@@ -52,87 +103,48 @@ namespace Haley.Utils
                         publicExists = true;
                     }
 
-                    if (!publicExists)
+                    if (!publicExists) return RequestFailure("request.public_key_missing", requestPath);
+                    var publicKey = ReadBoundedText(publicPath);
+                    if (privateExists)
                     {
-                        return RequestFailure("request.public_key_missing", requestPath);
+                        var derived = EncryptionUtils.ASymmetric.DerivePemPublicKey(ReadBoundedText(privatePath));
+                        if (!string.Equals(ComputePublicKeyHash(derived), ComputePublicKeyHash(publicKey), StringComparison.Ordinal))
+                            return RequestFailure("request.key_pair_mismatch", requestPath);
                     }
 
-                    DeploymentRequest? previous = null;
-                    string? previousEnvelope = null;
+                    var identity = ResolveIdentity(identityPath, requestPath, legacyRequestPath, publicKey, generated, normalized.NowUtc!.Value);
+                    if (identity == null) return RequestFailure("request.identity_missing", requestPath);
+
+                    DeploymentRequestResult? existing = null;
                     if (File.Exists(requestPath))
                     {
-                        previousEnvelope = ReadBoundedText(requestPath);
-                        var existing = ValidateRequestEnvelope(previousEnvelope, ReadBoundedText(publicPath));
-                        if (!existing.IsValid || existing.Request == null)
-                        {
-                            existing.RequestPath = requestPath;
-                            return existing;
-                        }
-                        previous = existing.Request;
-                        if (!string.Equals(previous.Product, normalized.Product, StringComparison.Ordinal)
-                            || !string.Equals(previous.Deployment, normalized.Deployment, StringComparison.Ordinal))
+                        existing = ValidateRequestEnvelope(ReadBoundedText(requestPath), publicKey);
+                        existing.RequestPath = requestPath;
+                        if (!existing.IsValid || existing.Request == null) return existing;
+                        if (!string.Equals(existing.Request.DeployId, identity.DeployId, StringComparison.Ordinal)
+                            || !string.Equals(existing.Request.Product, normalized.Product, StringComparison.Ordinal))
                         {
                             return RequestFailure("request.identity_conflict", requestPath);
                         }
-                    }
-                    else if (!generated)
-                    {
-                        return RequestFailure("request.missing_for_existing_deployment", requestPath);
+                        if (!renew && RequestMatches(existing.Request, normalized)) return existing;
+                        if (!renew) return RequestFailure("request.renew_required", requestPath);
                     }
 
-                    if (!privateExists)
-                    {
-                        return previous == null
-                            ? RequestFailure("request.private_key_missing", requestPath)
-                            : new DeploymentRequestResult
-                            {
-                                IsValid = true,
-                                Error = "request.private_key_missing_update_skipped",
-                                Envelope = previousEnvelope,
-                                Request = previous,
-                                RequestPath = requestPath
-                            };
-                    }
-
-                    var evidence = BuildRequestEvidence(normalized.MachineEvidenceMode);
-                    if (normalized.MachineEvidenceMode == MachineLockMode.Lite && evidence.Lite.Count < 1)
-                    {
-                        return RequestFailure("request.lite_machine_evidence_unavailable", requestPath);
-                    }
-                    if (normalized.MachineEvidenceMode == MachineLockMode.Strong && evidence.Strong.Count < 2)
-                    {
-                        return RequestFailure("request.strong_machine_evidence_unavailable", requestPath);
-                    }
+                    if (!privateExists) return RequestFailure("request.private_key_missing", requestPath);
 
                     var request = new DeploymentRequest
                     {
                         Version = SupportedVersion,
-                        DeployId = previous?.DeployId ?? Guid.NewGuid().ToString("N"),
-                        Created = previous?.Created ?? normalized.NowUtc!.Value,
-                        Deployment = normalized.Deployment,
+                        DeployId = identity.DeployId,
+                        Created = identity.Created,
+                        Deployment = identity.DeployId,
                         Product = normalized.Product,
                         ProductVersion = normalized.ProductVersion,
                         Features = NormalizeCatalog(normalized.Features),
-                        AvailableLimits = NormalizeCatalog(normalized.AvailableLimits),
-                        MachineEvidence = evidence
+                        AvailableLimits = new List<string>(),
+                        MachineEvidence = BuildRequestEvidence()
                     };
                     var encodedRequest = JsonSerializer.Serialize(request, DeploymentJson.CompactOptions);
-                    if (previous != null
-                        && previousEnvelope != null
-                        && string.Equals(
-                            JsonSerializer.Serialize(previous, DeploymentJson.CompactOptions),
-                            encodedRequest,
-                            StringComparison.Ordinal))
-                    {
-                        return new DeploymentRequestResult
-                        {
-                            IsValid = true,
-                            Envelope = previousEnvelope,
-                            Request = previous,
-                            RequestPath = requestPath
-                        };
-                    }
-
                     var proofEnvelope = EncryptionUtils.ASymmetric.Envelope.Prepare(
                         DeploymentRequestCanonicalizer.Create(request), ReadBoundedText(privatePath), "deployment");
                     var proof = JsonSerializer.Deserialize<RsaEnvelope>(proofEnvelope, DeploymentJson.CompactOptions)
@@ -143,11 +155,8 @@ namespace Haley.Utils
                         DeployPrint = proof.Signature
                     };
                     var serialized = JsonSerializer.Serialize(envelope, DeploymentJson.Options);
-                    var validation = ValidateRequestEnvelope(serialized, ReadBoundedText(publicPath));
-                    if (!validation.IsValid)
-                    {
-                        return validation;
-                    }
+                    var validation = ValidateRequestEnvelope(serialized, publicKey);
+                    if (!validation.IsValid) return validation;
 
                     WriteAtomically(requestPath, serialized, overwrite: true);
                     validation.Envelope = serialized;
@@ -210,28 +219,37 @@ namespace Haley.Utils
 
         internal static DeploymentRequestInput NormalizeInput(DeploymentRequestInput input)
         {
-            if (!Enum.IsDefined(typeof(MachineLockMode), input.MachineEvidenceMode))
-                throw new ArgumentOutOfRangeException(nameof(input.MachineEvidenceMode));
             var product = NormalizeCode(input.Product, nameof(input.Product));
-            var deployment = NormalizeCode(input.Deployment, nameof(input.Deployment));
             var version = NormalizeText(input.ProductVersion, nameof(input.ProductVersion), 64);
             return new DeploymentRequestInput
             {
                 Product = product,
                 ProductVersion = version,
-                Deployment = deployment,
                 Features = input.Features ?? Array.Empty<string>(),
-                AvailableLimits = input.AvailableLimits ?? Array.Empty<string>(),
-                MachineEvidenceMode = input.MachineEvidenceMode,
                 BaseDirectory = input.BaseDirectory,
                 NowUtc = (input.NowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime()
             };
         }
 
-        internal static string GetDeploymentDirectory(string? baseDirectory)
+        public static string GetDeploymentDirectoryPath(string? baseDirectory = null)
         {
-            var root = string.IsNullOrWhiteSpace(baseDirectory) ? AppContext.BaseDirectory : baseDirectory.Trim();
+            var root = string.IsNullOrWhiteSpace(baseDirectory) ? AppContext.BaseDirectory : baseDirectory!.Trim();
             return Path.Combine(Path.GetFullPath(root), DeployDirectoryName);
+        }
+
+        public static string GetRequestPath(string product, string? baseDirectory = null)
+            => Path.Combine(GetDeploymentDirectoryPath(baseDirectory), NormalizeCode(product, nameof(product)) + ".request");
+
+        public static string ResolveLicensePath(string? licensePath, string? baseDirectory = null)
+        {
+            var root = string.IsNullOrWhiteSpace(baseDirectory) ? AppContext.BaseDirectory : Path.GetFullPath(baseDirectory!.Trim());
+            if (string.IsNullOrWhiteSpace(licensePath))
+                return Path.Combine(GetDeploymentDirectoryPath(root), LicenseFileName);
+
+            var configuredPath = licensePath!.Trim();
+            return Path.GetFullPath(Path.IsPathRooted(configuredPath)
+                ? configuredPath
+                : Path.Combine(root, configuredPath));
         }
 
         internal static string ReadBoundedText(string path)
@@ -294,13 +312,15 @@ namespace Haley.Utils
 
         private static string? ValidateRequestStructure(DeploymentRequest request)
         {
-            if (request.Version != SupportedVersion) return "request.unsupported_version";
+            if (request.Version != SupportedVersion && request.Version != LegacyVersion) return "request.unsupported_version";
             if (!Guid.TryParseExact(request.DeployId, "N", out _)) return "request.invalid_deploy_id";
             if (request.Created == default) return "request.created_required";
             try
             {
                 _ = NormalizeCode(request.Product, nameof(request.Product));
-                _ = NormalizeCode(request.Deployment, nameof(request.Deployment));
+                if (request.Version == LegacyVersion) _ = NormalizeCode(request.Deployment, nameof(request.Deployment));
+                if (request.Version == SupportedVersion && !string.Equals(request.Deployment, request.DeployId, StringComparison.Ordinal))
+                    return "request.deployment_mismatch";
                 _ = NormalizeText(request.ProductVersion, nameof(request.ProductVersion), 64);
                 request.Features = NormalizeCatalog(request.Features);
                 request.AvailableLimits = NormalizeCatalog(request.AvailableLimits);
@@ -321,18 +341,83 @@ namespace Haley.Utils
             }
         }
 
-        private static MachineEvidence BuildRequestEvidence(MachineLockMode mode)
+        private static MachineEvidence BuildRequestEvidence()
         {
             var evidence = new MachineEvidence();
-            if (mode == MachineLockMode.None) return evidence;
             var lite = AssetUtils.GetMachineEvidence(MachineLockMode.Lite);
             if (lite.IsAvailable) evidence.Lite.AddRange(lite.Fingerprints);
-            if (mode == MachineLockMode.Strong)
-            {
-                var strong = AssetUtils.GetMachineEvidence(MachineLockMode.Strong);
-                if (strong.IsAvailable) evidence.Strong.AddRange(strong.Fingerprints);
-            }
+            var strong = AssetUtils.GetMachineEvidence(MachineLockMode.Strong);
+            if (strong.IsAvailable) evidence.Strong.AddRange(strong.Fingerprints);
             return evidence;
+        }
+
+        private static DeploymentIdentity? ResolveIdentity(
+            string identityPath,
+            string requestPath,
+            string legacyRequestPath,
+            string publicKey,
+            bool generated,
+            DateTimeOffset now)
+        {
+            if (File.Exists(identityPath)) return ReadIdentity(identityPath, publicKey);
+
+            foreach (var candidate in new[] { requestPath, legacyRequestPath })
+            {
+                if (!File.Exists(candidate)) continue;
+                var existing = ValidateRequestEnvelope(ReadBoundedText(candidate), publicKey);
+                if (!existing.IsValid || existing.Request == null)
+                    throw new InvalidDataException("The existing deployment request cannot establish the deployment identity.");
+                var migrated = new DeploymentIdentity
+                {
+                    Version = 1,
+                    DeployId = existing.Request.DeployId,
+                    Created = existing.Request.Created,
+                    PublicKeyHash = ComputePublicKeyHash(publicKey)
+                };
+                WriteAtomically(identityPath, JsonSerializer.Serialize(migrated, DeploymentJson.Options), overwrite: false);
+                return migrated;
+            }
+
+            if (!generated) return null;
+            var created = new DeploymentIdentity
+            {
+                Version = 1,
+                DeployId = Guid.NewGuid().ToString("N"),
+                Created = now,
+                PublicKeyHash = ComputePublicKeyHash(publicKey)
+            };
+            WriteAtomically(identityPath, JsonSerializer.Serialize(created, DeploymentJson.Options), overwrite: false);
+            return created;
+        }
+
+        private static DeploymentIdentity ReadIdentity(string path, string publicKey)
+        {
+            var identity = JsonSerializer.Deserialize<DeploymentIdentity>(ReadBoundedText(path), DeploymentJson.CompactOptions)
+                ?? throw new InvalidDataException("The deployment identity is empty.");
+            if (identity.Version != 1
+                || !Guid.TryParseExact(identity.DeployId, "N", out _)
+                || identity.Created == default
+                || !string.Equals(identity.PublicKeyHash, ComputePublicKeyHash(publicKey), StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("The deployment identity is invalid or does not belong to the deployment key.");
+            }
+            return identity;
+        }
+
+        private static string ComputePublicKeyHash(string publicKey)
+        {
+            var canonical = publicKey.Trim().Replace("\r\n", "\n");
+            using (var sha = SHA256.Create())
+            {
+                return Convert.ToBase64String(sha.ComputeHash(StrictUtf8.GetBytes(canonical))).SanitizeBase64();
+            }
+        }
+
+        private static bool RequestMatches(DeploymentRequest request, DeploymentRequestInput input)
+        {
+            return request.Version == SupportedVersion
+                && string.Equals(request.ProductVersion, input.ProductVersion, StringComparison.Ordinal)
+                && request.Features.SequenceEqual(NormalizeCatalog(input.Features), StringComparer.Ordinal);
         }
 
         private static List<string> NormalizeCatalog(IEnumerable<string>? values)

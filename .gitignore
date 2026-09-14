@@ -352,3 +352,6 @@ MigrationBackup/
 
 # Local verification build outputs
 .buildverify/
+
+# Local deployment identity
+**/.deployinfo/

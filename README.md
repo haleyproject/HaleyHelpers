@@ -16,8 +16,8 @@ var png = QrCodeBuilder.CreatePng("https://example.com/view/signed-token");
 ## Deployment requests and signed grants
 
 `DeploymentUtils` provides the reusable, product-neutral deployment-grant workflow.
-The product supplies only its identity and the feature/limit catalog it actually
-understands:
+The request producer supplies only the product, version, and available feature catalog.
+Deployment identity and available machine evidence are generated locally:
 
 ```csharp
 using Haley.Models;
@@ -27,34 +27,28 @@ var request = DeploymentUtils.PrepareRequest(new DeploymentRequestInput
 {
     Product = "sample.product",
     ProductVersion = "1.4.0",
-    Deployment = "customer-primary",
     Features = new[] { "documents.read", "documents.write" },
-    AvailableLimits = new[] { "tenant.max" },
-    MachineEvidenceMode = MachineLockMode.Lite,
     BaseDirectory = AppContext.BaseDirectory
 });
 
 var result = DeploymentUtils.EvaluateGrant(new DeploymentGrantOptions
 {
-    LicensePath = "license/sample.lic",
+    LicensePath = "",
     Product = "sample.product",
     ProductVersion = "1.4.0",
-    Deployment = "customer-primary",
     Features = new[] { "documents.read", "documents.write" },
     AvailableLimits = new[] { "tenant.max" },
     TrialLimits = new Dictionary<string, long> { ["tenant.max"] = 1 },
-    RequestMachineEvidenceMode = MachineLockMode.Lite,
     TrialDays = 14,
     BaseDirectory = AppContext.BaseDirectory
 });
 ```
 
-The first call creates `deployinfo/deploy.pem`, `deploy.pub`, and `request.json`.
-Persist that directory and send only `request.json` to the issuer. Private deployment
+The first call creates `.deployinfo/deploy.pem`, `deploy.pub`, `deployment.json`, and
+`sample.product.request`. Persist that directory and send only the `.request` file to the issuer. Private deployment
 keys and raw machine identifiers never leave the deployment; only domain-separated
-SHA-256 fingerprints appear in the request. An unchanged catalog reuses the existing
-signed request byte-for-byte; a version, catalog, or evidence change refreshes it while
-preserving the deployment identity. `None`, `Lite`, and `Strong` machine modes
-are supported. Signed features are intersected with the local catalog, numeric limits
-use `string` keys and `long` values, and the verified result is suitable for caching by
-the consuming application.
+SHA-256 fingerprints appear in the request. `RenewRequest` refreshes version, catalog,
+and evidence while preserving the random deployment ID and keypair. The issuer alone
+selects `None`, `Lite`, or `Strong`, feature decisions, numeric limits, validity, and grace.
+`EvaluateGrant` never creates an identity or request. An empty license path resolves to
+`.deployinfo/license.lic`; a non-empty path is authoritative.
