@@ -18,5 +18,6 @@ namespace Haley.Models
         public string? PublicKeyPath { get; set; }
         public string? BaseDirectory { get; set; }
         public DateTimeOffset? NowUtc { get; set; }
+        public bool AllowUnrestrictedOverride { get; set; } = true;
     }
 }

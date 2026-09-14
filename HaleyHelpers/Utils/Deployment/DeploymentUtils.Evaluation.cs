@@ -37,6 +37,12 @@ namespace Haley.Utils
                     request: localRequest.Request, requestPath: localRequest.RequestPath ?? requestPath);
             }
 
+            if (normalized.AllowUnrestrictedOverride)
+            {
+                var unrestricted = EvaluateUnrestrictedOverride(normalized, baseDirectory, localRequest.Request, now);
+                if (unrestricted != null) return unrestricted;
+            }
+
             if (!File.Exists(licensePath))
             {
                 var trialEnds = localRequest.Request.Created.AddDays(normalized.TrialDays);
@@ -206,7 +212,8 @@ namespace Haley.Utils
                 RecoveryDays = options.RecoveryDays,
                 PublicKeyPath = options.PublicKeyPath,
                 BaseDirectory = options.BaseDirectory,
-                NowUtc = options.NowUtc
+                NowUtc = options.NowUtc,
+                AllowUnrestrictedOverride = options.AllowUnrestrictedOverride
             };
         }
 

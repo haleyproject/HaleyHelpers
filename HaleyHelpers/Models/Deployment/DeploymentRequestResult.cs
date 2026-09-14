@@ -7,6 +7,7 @@ namespace Haley.Models
         public string? Message { get; internal set; }
         public string? Envelope { get; internal set; }
         public string? RequestPath { get; internal set; }
+        public string? OverrideRequestPath { get; internal set; }
         public DeploymentRequest? Request { get; internal set; }
     }
 }

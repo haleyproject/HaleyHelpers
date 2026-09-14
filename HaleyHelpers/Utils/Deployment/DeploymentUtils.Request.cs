@@ -28,10 +28,10 @@ namespace Haley.Utils
         private static readonly object FileGate = new object();
 
         public static DeploymentRequestResult PrepareRequest(DeploymentRequestInput input)
-            => PrepareRequestCore(input, renew: false);
+            => WithFreeModeRequest(input, PrepareRequestCore(input, renew: false));
 
         public static DeploymentRequestResult RenewRequest(DeploymentRequestInput input)
-            => PrepareRequestCore(input, renew: true);
+            => WithFreeModeRequest(input, PrepareRequestCore(input, renew: true));
 
         public static DeploymentRequestResult EnsureRequest(DeploymentRequestInput input)
         {
