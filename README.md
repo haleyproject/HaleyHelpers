@@ -42,7 +42,8 @@ var request = DeploymentUtils.EnsureRequest(new DeploymentRequestInput
             Description = "Configured product edition"
         }
     },
-    BaseDirectory = AppContext.BaseDirectory
+    BaseDirectory = AppContext.BaseDirectory,
+    LicensePath = ""
 });
 
 var result = DeploymentUtils.EvaluateGrant(new DeploymentGrantOptions
@@ -69,7 +70,10 @@ keys and raw machine identifiers never leave the deployment; only domain-separat
 SHA-256 fingerprints appear only under a generic `proof` object as opaque arrays in the request. Hardware source names are
 not serialized. When the request format, application version, or advertised catalog
 changes, `EnsureRequest` renews the request while preserving the random deployment ID
-and keypair. Corrupt or partially missing deployment state is not silently replaced.
+and keypair. When only the keypair remains, `EnsureRequest` may create a new identity and
+request only when the resolved license path contains no artifact. If a license exists,
+the incomplete state fails closed so an issued deployment binding is not replaced.
+Corrupt or mismatched deployment state is never silently replaced.
 `PrepareRequest` and `RenewRequest` remain available to operator tooling. The issuer alone
 selects `None`, `Lite`, or `Strong`, feature decisions, opaque limit values, validity, and grace.
 `EvaluateGrant` never creates an identity or request. An empty license path resolves to

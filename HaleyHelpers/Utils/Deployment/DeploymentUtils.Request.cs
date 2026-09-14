@@ -91,6 +91,7 @@ namespace Haley.Utils
                     var publicPath = Path.Combine(root, PublicKeyFileName);
                     var identityPath = Path.Combine(root, IdentityFileName);
                     var legacyRequestPath = Path.Combine(root, LegacyRequestFileName);
+                    var licensePath = ResolveLicensePath(normalized.LicensePath, normalized.BaseDirectory);
                     var privateExists = File.Exists(privatePath);
                     var publicExists = File.Exists(publicPath);
                     var generated = false;
@@ -122,7 +123,14 @@ namespace Haley.Utils
                             return RequestFailure("request.key_pair_mismatch", requestPath);
                     }
 
-                    var identity = ResolveIdentity(identityPath, requestPath, legacyRequestPath, publicKey, generated, normalized.NowUtc!.Value);
+                    var identity = ResolveIdentity(
+                        identityPath,
+                        requestPath,
+                        legacyRequestPath,
+                        licensePath,
+                        publicKey,
+                        generated,
+                        normalized.NowUtc!.Value);
                     if (identity == null) return RequestFailure("request.identity_missing", requestPath);
 
                     DeploymentRequestResult? existing = null;
@@ -238,6 +246,7 @@ namespace Haley.Utils
                 Features = input.Features ?? Array.Empty<string>(),
                 Limits = NormalizeLimits(input.Limits),
                 BaseDirectory = input.BaseDirectory,
+                LicensePath = input.LicensePath,
                 NowUtc = (input.NowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime()
             };
         }
@@ -371,6 +380,7 @@ namespace Haley.Utils
             string identityPath,
             string requestPath,
             string legacyRequestPath,
+            string licensePath,
             string publicKey,
             bool generated,
             DateTimeOffset now)
@@ -394,7 +404,7 @@ namespace Haley.Utils
                 return migrated;
             }
 
-            if (!generated) return null;
+            if (!generated && File.Exists(licensePath)) return null;
             var created = new DeploymentIdentity
             {
                 Version = 1,
