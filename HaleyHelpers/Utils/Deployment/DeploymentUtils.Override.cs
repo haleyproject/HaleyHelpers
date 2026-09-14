@@ -32,10 +32,16 @@ namespace Haley.Utils
         }
 
         public static string GetFreeModeRequestPath(string? baseDirectory = null)
-            => Path.Combine(GetDeploymentDirectoryPath(baseDirectory), FreeModeRequestFileName);
+            => GetFreeModeRequestPath(baseDirectory, null);
+
+        public static string GetFreeModeRequestPath(string? baseDirectory, string? deploymentInfoLocation)
+            => Path.Combine(GetDeploymentDirectoryPath(baseDirectory, deploymentInfoLocation), FreeModeRequestFileName);
 
         public static string GetUnrestrictedOverridePath(string? baseDirectory = null)
-            => Path.Combine(GetDeploymentDirectoryPath(baseDirectory), UnrestrictedOverrideFileName);
+            => GetUnrestrictedOverridePath(baseDirectory, null);
+
+        public static string GetUnrestrictedOverridePath(string? baseDirectory, string? deploymentInfoLocation)
+            => Path.Combine(GetDeploymentDirectoryPath(baseDirectory, deploymentInfoLocation), UnrestrictedOverrideFileName);
 
         private static DeploymentRequestResult WithFreeModeRequest(
             DeploymentRequestInput input,
@@ -47,7 +53,7 @@ namespace Haley.Utils
                 var normalized = NormalizeInput(input);
                 lock (FileGate)
                 {
-                    var publicPath = Path.Combine(GetDeploymentDirectoryPath(normalized.BaseDirectory), PublicKeyFileName);
+                    var publicPath = Path.Combine(GetDeploymentDirectoryPath(normalized.BaseDirectory, normalized.DeploymentInfoLocation), PublicKeyFileName);
                     var publicKey = ReadBoundedText(publicPath);
                     var request = new DeploymentOverrideRequest
                     {
@@ -58,7 +64,7 @@ namespace Haley.Utils
                     };
                     request.Fingerprint = ComputeOverrideFingerprint(request, publicKey);
                     var serialized = JsonSerializer.Serialize(request, DeploymentJson.Options);
-                    var path = GetFreeModeRequestPath(normalized.BaseDirectory);
+                    var path = GetFreeModeRequestPath(normalized.BaseDirectory, normalized.DeploymentInfoLocation);
                     if (!File.Exists(path) || !string.Equals(ReadBoundedText(path), serialized, StringComparison.Ordinal))
                         WriteAtomically(path, serialized, overwrite: true);
                     result.OverrideRequestPath = path;
@@ -77,7 +83,8 @@ namespace Haley.Utils
             DeploymentRequest localRequest,
             DateTimeOffset now)
         {
-            var path = GetUnrestrictedOverridePath(baseDirectory);
+            var path = GetUnrestrictedOverridePath(baseDirectory, options.DeploymentInfoLocation);
+            var requestPath = GetRequestPath(options.Product, baseDirectory, options.DeploymentInfoLocation);
             if (!File.Exists(path)) return null;
 
             try
@@ -86,27 +93,28 @@ namespace Haley.Utils
                 var verification = ValidateIssuerEnvelope(artifact, options.PublicKeyPath, baseDirectory);
                 if (!verification.IsValid || string.IsNullOrWhiteSpace(verification.Payload))
                     return OverrideResult(DeploymentGrantState.TamperedGrant, now,
-                        verification.Error ?? "override.invalid_signature", path, localRequest, verification.Key);
+                        verification.Error ?? "override.invalid_signature", path, requestPath, localRequest, verification.Key);
 
                 var request = ParseOverrideRequest(verification.Payload!);
                 var error = ValidateOverrideStructure(request);
                 if (error != null)
-                    return OverrideResult(DeploymentGrantState.InvalidGrant, now, error, path, localRequest, verification.Key, request);
+                    return OverrideResult(DeploymentGrantState.InvalidGrant, now, error, path, requestPath, localRequest, verification.Key, request);
                 if (!string.Equals(request.Product, options.Product, StringComparison.Ordinal))
-                    return OverrideResult(DeploymentGrantState.InvalidGrant, now, "override.product_mismatch", path, localRequest, verification.Key, request);
+                    return OverrideResult(DeploymentGrantState.InvalidGrant, now, "override.product_mismatch", path, requestPath, localRequest, verification.Key, request);
                 if (!string.Equals(request.DeployId, localRequest.DeployId, StringComparison.Ordinal))
-                    return OverrideResult(DeploymentGrantState.InvalidDeployment, now, "override.deployment_mismatch", path, localRequest, verification.Key, request);
+                    return OverrideResult(DeploymentGrantState.InvalidDeployment, now, "override.deployment_mismatch", path, requestPath, localRequest, verification.Key, request);
 
-                var publicPath = Path.Combine(GetDeploymentDirectoryPath(baseDirectory), PublicKeyFileName);
+                var publicPath = Path.Combine(GetDeploymentDirectoryPath(baseDirectory, options.DeploymentInfoLocation), PublicKeyFileName);
                 var publicKey = ReadBoundedText(publicPath);
                 if (!string.Equals(request.Fingerprint, ComputeOverrideFingerprint(request, publicKey), StringComparison.Ordinal))
-                    return OverrideResult(DeploymentGrantState.InvalidDeployment, now, "override.fingerprint_mismatch", path, localRequest, verification.Key, request);
+                    return OverrideResult(DeploymentGrantState.InvalidDeployment, now, "override.fingerprint_mismatch", path, requestPath, localRequest, verification.Key, request);
 
                 return OverrideResult(
                     DeploymentGrantState.Unrestricted,
                     now,
                     null,
                     path,
+                    requestPath,
                     localRequest,
                     verification.Key,
                     request,
@@ -115,7 +123,7 @@ namespace Haley.Utils
             catch (Exception exception) when (IsExpectedFailure(exception))
             {
                 return OverrideResult(DeploymentGrantState.InvalidGrant, now,
-                    "override.artifact_invalid", path, localRequest, message: exception.Message);
+                    "override.artifact_invalid", path, requestPath, localRequest, message: exception.Message);
             }
         }
 
@@ -124,6 +132,7 @@ namespace Haley.Utils
             DateTimeOffset now,
             string? error,
             string path,
+            string requestPath,
             DeploymentRequest request,
             string? key = null,
             DeploymentOverrideRequest? deploymentOverride = null,
@@ -131,7 +140,7 @@ namespace Haley.Utils
             string? message = null)
         {
             var result = Result(state, now, error, key, request: request,
-                features: features, limits: EmptyLimits(), requestPath: GetRequestPath(request.Product, Path.GetDirectoryName(Path.GetDirectoryName(path))));
+                features: features, limits: EmptyLimits(), requestPath: requestPath);
             result.Override = deploymentOverride;
             result.OverridePath = path;
             result.Message = message;

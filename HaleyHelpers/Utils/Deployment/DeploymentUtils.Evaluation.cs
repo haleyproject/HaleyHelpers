@@ -20,8 +20,8 @@ namespace Haley.Utils
             var baseDirectory = string.IsNullOrWhiteSpace(normalized.BaseDirectory)
                 ? AppContext.BaseDirectory
                 : normalized.BaseDirectory!;
-            var licensePath = ResolveLicensePath(normalized.LicensePath, baseDirectory);
-            var requestPath = GetRequestPath(normalized.Product, baseDirectory);
+            var licensePath = ResolveLicensePath(normalized.LicensePath, baseDirectory, normalized.DeploymentInfoLocation);
+            var requestPath = GetRequestPath(normalized.Product, baseDirectory, normalized.DeploymentInfoLocation);
             var localRequest = LoadRequest(new DeploymentRequestInput
             {
                 Product = normalized.Product,
@@ -29,6 +29,7 @@ namespace Haley.Utils
                 Features = normalized.Features,
                 Limits = normalized.Limits,
                 BaseDirectory = baseDirectory,
+                DeploymentInfoLocation = normalized.DeploymentInfoLocation,
                 NowUtc = now
             });
             if (!localRequest.IsValid || localRequest.Request == null)
@@ -103,7 +104,7 @@ namespace Haley.Utils
             var limits = SelectKnownLimits(payload.Limits, normalized.Limits);
             var warnings = BuildWarnings(payload, normalized);
             var deployRequest = ToDeploymentRequest(payload);
-            var deployDirectory = GetDeploymentDirectoryPath(baseDirectory);
+            var deployDirectory = GetDeploymentDirectoryPath(baseDirectory, normalized.DeploymentInfoLocation);
             var privatePath = Path.Combine(deployDirectory, PrivateKeyFileName);
             var publicPath = Path.Combine(deployDirectory, PublicKeyFileName);
             string? publicKey = null;
@@ -195,6 +196,7 @@ namespace Haley.Utils
                 Features = options.Features,
                 Limits = options.Limits,
                 BaseDirectory = options.BaseDirectory,
+                DeploymentInfoLocation = options.DeploymentInfoLocation,
                 NowUtc = options.NowUtc
             });
             var trialLimits = NormalizeLimitValues(options.TrialLimits);
@@ -212,6 +214,7 @@ namespace Haley.Utils
                 RecoveryDays = options.RecoveryDays,
                 PublicKeyPath = options.PublicKeyPath,
                 BaseDirectory = options.BaseDirectory,
+                DeploymentInfoLocation = options.DeploymentInfoLocation,
                 NowUtc = options.NowUtc,
                 AllowUnrestrictedOverride = options.AllowUnrestrictedOverride
             };
@@ -350,7 +353,7 @@ namespace Haley.Utils
             DateTimeOffset graceEnds,
             string requestPath)
         {
-            var directory = GetDeploymentDirectoryPath(options.BaseDirectory);
+            var directory = GetDeploymentDirectoryPath(options.BaseDirectory, options.DeploymentInfoLocation);
             var recoveryPath = Path.Combine(directory, RecoveryFileName);
             var digest = artifact.ComputeHash(HashMethod.Sha256, encodeBase64: false);
             DeploymentRecoveryRecord? record = null;

@@ -24,6 +24,7 @@ namespace Haley.Utils
         internal const string IdentityFileName = "deployment.json";
         internal const string LicenseFileName = "license.lic";
         internal const string RecoveryFileName = "recovery.json";
+        public const string DeploymentInfoLocationConfigurationKey = "deployinfo-location";
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
         private static readonly object FileGate = new object();
 
@@ -49,8 +50,8 @@ namespace Haley.Utils
                 var normalized = NormalizeInput(input);
                 lock (FileGate)
                 {
-                    var root = GetDeploymentDirectoryPath(normalized.BaseDirectory);
-                    var requestPath = GetRequestPath(normalized.Product, normalized.BaseDirectory);
+                    var root = GetDeploymentDirectoryPath(normalized.BaseDirectory, normalized.DeploymentInfoLocation);
+                    var requestPath = GetRequestPath(normalized.Product, normalized.BaseDirectory, normalized.DeploymentInfoLocation);
                     var publicPath = Path.Combine(root, PublicKeyFileName);
                     var identityPath = Path.Combine(root, IdentityFileName);
                     if (!File.Exists(publicPath)) return RequestFailure("request.public_key_missing", requestPath);
@@ -85,13 +86,13 @@ namespace Haley.Utils
                 var normalized = NormalizeInput(input);
                 lock (FileGate)
                 {
-                    var root = GetDeploymentDirectoryPath(normalized.BaseDirectory);
-                    var requestPath = GetRequestPath(normalized.Product, normalized.BaseDirectory);
+                    var root = GetDeploymentDirectoryPath(normalized.BaseDirectory, normalized.DeploymentInfoLocation);
+                    var requestPath = GetRequestPath(normalized.Product, normalized.BaseDirectory, normalized.DeploymentInfoLocation);
                     var privatePath = Path.Combine(root, PrivateKeyFileName);
                     var publicPath = Path.Combine(root, PublicKeyFileName);
                     var identityPath = Path.Combine(root, IdentityFileName);
                     var legacyRequestPath = Path.Combine(root, LegacyRequestFileName);
-                    var licensePath = ResolveLicensePath(normalized.LicensePath, normalized.BaseDirectory);
+                    var licensePath = ResolveLicensePath(normalized.LicensePath, normalized.BaseDirectory, normalized.DeploymentInfoLocation);
                     var privateExists = File.Exists(privatePath);
                     var publicExists = File.Exists(publicPath);
                     var generated = false;
@@ -246,25 +247,42 @@ namespace Haley.Utils
                 Features = input.Features ?? Array.Empty<string>(),
                 Limits = NormalizeLimits(input.Limits),
                 BaseDirectory = input.BaseDirectory,
+                DeploymentInfoLocation = input.DeploymentInfoLocation,
                 LicensePath = input.LicensePath,
                 NowUtc = (input.NowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime()
             };
         }
 
         public static string GetDeploymentDirectoryPath(string? baseDirectory = null)
+            => GetDeploymentDirectoryPath(baseDirectory, null);
+
+        public static string GetDeploymentDirectoryPath(string? baseDirectory, string? deploymentInfoLocation)
         {
             var root = string.IsNullOrWhiteSpace(baseDirectory) ? AppContext.BaseDirectory : baseDirectory!.Trim();
-            return Path.Combine(Path.GetFullPath(root), DeployDirectoryName);
+            var normalizedRoot = Path.GetFullPath(root);
+            if (string.IsNullOrWhiteSpace(deploymentInfoLocation))
+                return Path.Combine(normalizedRoot, DeployDirectoryName);
+
+            var configured = deploymentInfoLocation!.Trim();
+            return Path.GetFullPath(Path.IsPathRooted(configured)
+                ? configured
+                : Path.Combine(normalizedRoot, configured));
         }
 
         public static string GetRequestPath(string product, string? baseDirectory = null)
-            => Path.Combine(GetDeploymentDirectoryPath(baseDirectory), NormalizeCode(product, nameof(product)) + ".request");
+            => GetRequestPath(product, baseDirectory, null);
+
+        public static string GetRequestPath(string product, string? baseDirectory, string? deploymentInfoLocation)
+            => Path.Combine(GetDeploymentDirectoryPath(baseDirectory, deploymentInfoLocation), NormalizeCode(product, nameof(product)) + ".request");
 
         public static string ResolveLicensePath(string? licensePath, string? baseDirectory = null)
+            => ResolveLicensePath(licensePath, baseDirectory, null);
+
+        public static string ResolveLicensePath(string? licensePath, string? baseDirectory, string? deploymentInfoLocation)
         {
             var root = string.IsNullOrWhiteSpace(baseDirectory) ? AppContext.BaseDirectory : Path.GetFullPath(baseDirectory!.Trim());
             if (string.IsNullOrWhiteSpace(licensePath))
-                return Path.Combine(GetDeploymentDirectoryPath(root), LicenseFileName);
+                return Path.Combine(GetDeploymentDirectoryPath(root, deploymentInfoLocation), LicenseFileName);
 
             var configuredPath = licensePath!.Trim();
             return Path.GetFullPath(Path.IsPathRooted(configuredPath)
