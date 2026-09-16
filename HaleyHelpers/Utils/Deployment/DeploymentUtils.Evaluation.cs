@@ -92,7 +92,7 @@ namespace Haley.Utils
                 return Result(semanticState, now, semanticError, key: verification.Key, payload: payload, requestPath: requestPath);
             }
 
-            var graceEnds = payload.Expires.AddDays(payload.GraceDays);
+            var graceEnds = payload.Expires.AddDays(LicensePolicyLimits.CapGraceDays(payload.GraceDays));
             if (now < payload.NotBefore)
                 return Result(DeploymentGrantState.NotYetValid, now, "grant.not_yet_valid",
                     key: verification.Key, payload: payload, request: localRequest.Request,
@@ -194,7 +194,7 @@ namespace Haley.Utils
 
         private static DeploymentGrantOptions ValidateGrantOptions(DeploymentGrantOptions options)
         {
-            if (options.TrialDays < 0 || options.TrialDays > 3650) throw new ArgumentOutOfRangeException(nameof(options.TrialDays));
+            if (options.TrialDays < 0) throw new ArgumentOutOfRangeException(nameof(options.TrialDays));
             if (options.ExpiringDays < 0 || options.ExpiringDays > 3650) throw new ArgumentOutOfRangeException(nameof(options.ExpiringDays));
             if (options.RecoveryDays < 0 || options.RecoveryDays > 365) throw new ArgumentOutOfRangeException(nameof(options.RecoveryDays));
             var request = NormalizeInput(new DeploymentRequestInput
@@ -217,7 +217,7 @@ namespace Haley.Utils
                 Features = request.Features,
                 Limits = request.Limits,
                 TrialLimits = trialLimits,
-                TrialDays = options.TrialDays,
+                TrialDays = LicensePolicyLimits.CapTrialDays(options.TrialDays),
                 ExpiringDays = options.ExpiringDays,
                 RecoveryDays = options.RecoveryDays,
                 PublicKeyPath = options.PublicKeyPath,
@@ -253,8 +253,8 @@ namespace Haley.Utils
             if (!string.Equals(payload.Deployment, payload.DeployId, StringComparison.Ordinal)) return "grant.deployment_mismatch";
             if (payload.RequestCreated == default || string.IsNullOrWhiteSpace(payload.DeployPrint)) return "grant.request_proof_missing";
             if (payload.Issued == default || payload.NotBefore < payload.Issued || payload.Expires <= payload.NotBefore) return "grant.invalid_dates";
-            if (payload.GraceDays < 0 || payload.GraceDays > 3650) return "grant.invalid_grace";
-            try { _ = payload.Expires.AddDays(payload.GraceDays); }
+            if (payload.GraceDays < 0) return "grant.invalid_grace";
+            try { _ = payload.Expires.AddDays(LicensePolicyLimits.CapGraceDays(payload.GraceDays)); }
             catch (ArgumentOutOfRangeException) { return "grant.invalid_dates"; }
             if (!Enum.IsDefined(typeof(MachineLockMode), payload.MachineLock)) return "grant.machine_mode_invalid";
             if (payload.MachineEvidence == null) return "grant.machine_evidence_missing";

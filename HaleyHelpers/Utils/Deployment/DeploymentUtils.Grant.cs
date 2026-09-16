@@ -31,8 +31,8 @@ namespace Haley.Utils
                 throw new ArgumentOutOfRangeException(nameof(input.MachineLock));
             if (input.ValidityDays < 1 || input.ValidityDays > 36525)
                 throw new ArgumentOutOfRangeException(nameof(input.ValidityDays), "Validity must be between 1 and 36525 days.");
-            if (input.GraceDays < 0 || input.GraceDays > 3650)
-                throw new ArgumentOutOfRangeException(nameof(input.GraceDays), "Grace must be between 0 and 3650 days.");
+            if (input.GraceDays < 0)
+                throw new ArgumentOutOfRangeException(nameof(input.GraceDays), "Grace days cannot be negative.");
             if (input.IssuedUtc == default)
                 throw new ArgumentException("The issue time is required.", nameof(input.IssuedUtc));
             if (string.IsNullOrWhiteSpace(input.PrivateKey))
@@ -73,7 +73,7 @@ namespace Haley.Utils
                 Issued = issued,
                 NotBefore = issued,
                 Expires = expires,
-                GraceDays = input.GraceDays,
+                GraceDays = LicensePolicyLimits.CapGraceDays(input.GraceDays),
                 Features = features,
                 Limits = limits,
                 LimitCatalog = limitCatalog

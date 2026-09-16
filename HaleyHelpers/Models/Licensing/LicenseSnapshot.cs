@@ -189,7 +189,7 @@ namespace Haley.Models
                 Expires = payload?.Expires,
                 GraceEnds = payload == null ? grant.GraceEndsUtc : GraceEnd(payload),
                 RecoveryEnds = grant.RecoveryEndsUtc,
-                GraceDays = payload?.GraceDays,
+                GraceDays = payload == null ? null : LicensePolicyLimits.CapGraceDays(payload.GraceDays),
                 DaysRemaining = days,
                 SignatureValid = payload != null && grant.State != DeploymentGrantState.TamperedGrant,
                 TermActive = IsTermState(state),
@@ -219,7 +219,7 @@ namespace Haley.Models
                 feature => source.TryGetValue(feature, out var enabled) && enabled, StringComparer.Ordinal);
 
         private DateTimeOffset GraceEnd(DeploymentGrantPayload payload)
-            => Grant.GraceEndsUtc ?? payload.Expires.AddDays(payload.GraceDays);
+            => Grant.GraceEndsUtc ?? payload.Expires.AddDays(LicensePolicyLimits.CapGraceDays(payload.GraceDays));
 
         private string? BuildMessage(LicenseState state, int days)
         {

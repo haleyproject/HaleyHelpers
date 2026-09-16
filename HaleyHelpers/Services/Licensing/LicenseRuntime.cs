@@ -60,7 +60,7 @@ namespace Haley.Services
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (string.IsNullOrWhiteSpace(options.Product)) throw new ArgumentException("The product code is required.", nameof(options));
-            if (options.TrialDays < 0 || options.TrialDays > 3650) throw new ArgumentOutOfRangeException(nameof(options), "Trial days must be between 0 and 3650.");
+            if (options.TrialDays < 0) throw new ArgumentOutOfRangeException(nameof(options), "Trial days cannot be negative.");
             if (options.ExpiringDays < 0 || options.ExpiringDays > 3650) throw new ArgumentOutOfRangeException(nameof(options), "Expiring days must be between 0 and 3650.");
             if (options.RecoveryDays < 0 || options.RecoveryDays > 365) throw new ArgumentOutOfRangeException(nameof(options), "Recovery days must be between 0 and 365.");
 
