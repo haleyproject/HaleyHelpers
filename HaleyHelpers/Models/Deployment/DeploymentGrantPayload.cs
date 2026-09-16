@@ -34,6 +34,10 @@ namespace Haley.Models
         [JsonPropertyName("deployPrint")]
         public string DeployPrint { get; set; } = string.Empty;
 
+        [JsonPropertyName("binding")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Binding { get; set; }
+
         [JsonPropertyName("machineLock")]
         public MachineLockMode MachineLock { get; set; }
 
@@ -64,12 +68,15 @@ namespace Haley.Models
         public int GraceDays { get; set; }
 
         [JsonPropertyName("features")]
-        public Dictionary<string, bool> Features { get; set; } = new Dictionary<string, bool>(StringComparer.Ordinal);
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public Dictionary<string, bool>? Features { get; set; }
 
         [JsonPropertyName("limits")]
-        public Dictionary<string, JsonElement> Limits { get; set; } = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public Dictionary<string, JsonElement>? Limits { get; set; }
 
         [JsonPropertyName("limitCatalog")]
-        public Dictionary<string, DeploymentLimitDefinition> LimitCatalog { get; set; } = new Dictionary<string, DeploymentLimitDefinition>(StringComparer.Ordinal);
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public Dictionary<string, DeploymentLimitDefinition>? LimitCatalog { get; set; }
     }
 }

@@ -18,7 +18,6 @@ namespace Haley.Models
         InvalidRequest = 13,
         InvalidGrant = 14,
         NotYetValid = 15,
-        RequestUnavailable = 16,
-        Unrestricted = 17
+        RequestUnavailable = 16
     }
 }

@@ -15,8 +15,14 @@ namespace Haley.Utils
         public static DeploymentGrantResult EvaluateGrant(DeploymentGrantOptions options)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
-            var now = (options.NowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
             var normalized = ValidateGrantOptions(options);
+            return ApplyFeatureGrant(normalized, EvaluateLicenseGrant(normalized));
+        }
+
+        private static DeploymentGrantResult EvaluateLicenseGrant(DeploymentGrantOptions normalized)
+        {
+            var options = normalized;
+            var now = (options.NowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
             var baseDirectory = string.IsNullOrWhiteSpace(normalized.BaseDirectory)
                 ? AppContext.BaseDirectory
                 : normalized.BaseDirectory!;
@@ -36,12 +42,6 @@ namespace Haley.Utils
             {
                 return Result(MapRequestFailure(localRequest.Error), now, localRequest.Error,
                     request: localRequest.Request, requestPath: localRequest.RequestPath ?? requestPath);
-            }
-
-            if (normalized.AllowUnrestrictedOverride)
-            {
-                var unrestricted = EvaluateUnrestrictedOverride(normalized, baseDirectory, localRequest.Request, now);
-                if (unrestricted != null) return unrestricted;
             }
 
             if (!File.Exists(licensePath))
@@ -95,15 +95,23 @@ namespace Haley.Utils
             var graceEnds = payload.Expires.AddDays(payload.GraceDays);
             if (now < payload.NotBefore)
                 return Result(DeploymentGrantState.NotYetValid, now, "grant.not_yet_valid",
-                    key: verification.Key, payload: payload, graceEnds: graceEnds, requestPath: requestPath);
+                    key: verification.Key, payload: payload, request: localRequest.Request,
+                    graceEnds: graceEnds, requestPath: requestPath);
             if (now >= graceEnds)
                 return Result(DeploymentGrantState.Expired, now, "grant.expired",
-                    key: verification.Key, payload: payload, graceEnds: graceEnds, requestPath: requestPath);
+                    key: verification.Key, payload: payload, request: localRequest.Request,
+                    graceEnds: graceEnds, requestPath: requestPath);
 
-            var features = SelectKnownFeatures(payload.Features, normalized.Features);
-            var limits = SelectKnownLimits(payload.Limits, normalized.Limits);
+            var features = SelectKnownFeatures(payload.Features!, normalized.Features);
+            var limits = SelectKnownLimits(payload.Limits!, normalized.Limits);
             var warnings = BuildWarnings(payload, normalized);
-            var deployRequest = ToDeploymentRequest(payload);
+            DeploymentRequest deployRequest;
+            try { deployRequest = ToDeploymentRequest(payload); }
+            catch (Exception exception) when (IsExpectedFailure(exception))
+            {
+                return Result(DeploymentGrantState.InvalidGrant, now, "grant.binding_invalid",
+                    verification.Key, payload, requestPath: requestPath);
+            }
             var deployDirectory = GetDeploymentDirectoryPath(baseDirectory, normalized.DeploymentInfoLocation);
             var privatePath = Path.Combine(deployDirectory, PrivateKeyFileName);
             var publicPath = Path.Combine(deployDirectory, PublicKeyFileName);
@@ -215,8 +223,7 @@ namespace Haley.Utils
                 PublicKeyPath = options.PublicKeyPath,
                 BaseDirectory = options.BaseDirectory,
                 DeploymentInfoLocation = options.DeploymentInfoLocation,
-                NowUtc = options.NowUtc,
-                AllowUnrestrictedOverride = options.AllowUnrestrictedOverride
+                NowUtc = options.NowUtc
             };
         }
 
@@ -272,6 +279,13 @@ namespace Haley.Utils
 
         private static DeploymentRequest ToDeploymentRequest(DeploymentGrantPayload payload)
         {
+            if (!string.IsNullOrWhiteSpace(payload.Binding))
+            {
+                var bound = DecodeRequestEnvelope(payload.Binding!);
+                if (!bound.IsValid || bound.Request == null)
+                    throw new InvalidDataException("The deployment binding is invalid.");
+                return bound.Request;
+            }
             return new DeploymentRequest
             {
                 Version = payload.Version,
@@ -281,9 +295,9 @@ namespace Haley.Utils
                 Product = payload.Product,
                 ProductVersion = payload.ProductVersion,
                 MachineEvidence = payload.MachineEvidence,
-                Features = payload.Features.Keys.OrderBy(item => item, StringComparer.Ordinal).ToList(),
+                Features = (payload.Features ?? new Dictionary<string, bool>()).Keys.OrderBy(item => item, StringComparer.Ordinal).ToList(),
                 Limits = payload.Version >= SupportedVersion
-                    ? NormalizeLimits(payload.LimitCatalog)
+                    ? NormalizeLimits(payload.LimitCatalog ?? new Dictionary<string, DeploymentLimitDefinition>())
                     : new Dictionary<string, DeploymentLimitDefinition>(StringComparer.Ordinal)
             };
         }
@@ -293,11 +307,11 @@ namespace Haley.Utils
             var result = new List<string>();
             if (!string.Equals(payload.ProductVersion, options.ProductVersion, StringComparison.Ordinal))
                 result.Add("grant.product_version_differs");
-            foreach (var feature in payload.Features.Keys.Except(options.Features, StringComparer.Ordinal))
+            foreach (var feature in (payload.Features ?? new Dictionary<string, bool>()).Keys.Except(options.Features, StringComparer.Ordinal))
                 result.Add("grant.unknown_feature:" + feature);
-            foreach (var limit in payload.Limits.Keys.Except(options.Limits.Keys, StringComparer.Ordinal))
+            foreach (var limit in (payload.Limits ?? new Dictionary<string, JsonElement>()).Keys.Except(options.Limits.Keys, StringComparer.Ordinal))
                 result.Add("grant.unknown_limit:" + limit);
-            foreach (var limit in payload.Limits.Keys.Intersect(options.Limits.Keys, StringComparer.Ordinal))
+            foreach (var limit in (payload.Limits ?? new Dictionary<string, JsonElement>()).Keys.Intersect(options.Limits.Keys, StringComparer.Ordinal))
             {
                 if (!string.Equals(LimitType(payload.Limits[limit]), LimitType(options.Limits[limit].DefaultValue), StringComparison.Ordinal))
                     result.Add("grant.limit_type_differs:" + limit);

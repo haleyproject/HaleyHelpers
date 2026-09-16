@@ -10,6 +10,12 @@ namespace Haley.Utils
     public static partial class DeploymentUtils
     {
         public static string PrepareGrant(DeploymentGrantInput input)
+            => PrepareGrantCore(input, includeLegacyEntitlements: true);
+
+        public static string PrepareLicenseGrant(DeploymentGrantInput input)
+            => PrepareGrantCore(input, includeLegacyEntitlements: false);
+
+        private static string PrepareGrantCore(DeploymentGrantInput input, bool includeLegacyEntitlements)
         {
             if (input == null) throw new ArgumentNullException(nameof(input));
             var decoded = DecodeRequestEnvelope(input.RequestEnvelope);
@@ -34,11 +40,18 @@ namespace Haley.Utils
             if (!EncryptionUtils.ASymmetric.Envelope.IsValidKeyName(input.Key))
                 throw new ArgumentException("The issuer key name is invalid.", nameof(input.Key));
 
-            var features = CopyFeatures(input.Features);
-            var limits = NormalizeLimitValues(input.Limits);
-            RequireExactCatalog(request.Features, features.Keys, "feature");
-            RequireExactCatalog(request.Limits.Keys, limits.Keys, "limit");
-            ValidateLimitTypes(request.Limits, limits);
+            Dictionary<string, bool>? features = null;
+            Dictionary<string, JsonElement>? limits = null;
+            Dictionary<string, DeploymentLimitDefinition>? limitCatalog = null;
+            if (includeLegacyEntitlements)
+            {
+                features = CopyFeatures(input.Features);
+                limits = NormalizeLimitValues(input.Limits);
+                RequireExactCatalog(request.Features, features.Keys, "feature");
+                RequireExactCatalog(request.Limits.Keys, limits.Keys, "limit");
+                ValidateLimitTypes(request.Limits, limits);
+                limitCatalog = NormalizeLimits(request.Limits);
+            }
             ValidateSelectedMachineEvidence(request.MachineEvidence, input.MachineLock);
 
             var issued = input.IssuedUtc.ToUniversalTime();
@@ -54,6 +67,7 @@ namespace Haley.Utils
                 DeployId = request.DeployId,
                 RequestCreated = request.Created,
                 DeployPrint = JsonSerializer.Deserialize<RequestEnvelope>(input.RequestEnvelope, DeploymentJson.CompactOptions)!.DeployPrint,
+                Binding = input.RequestEnvelope,
                 MachineLock = input.MachineLock,
                 MachineEvidence = request.MachineEvidence,
                 Issued = issued,
@@ -62,7 +76,7 @@ namespace Haley.Utils
                 GraceDays = input.GraceDays,
                 Features = features,
                 Limits = limits,
-                LimitCatalog = NormalizeLimits(request.Limits)
+                LimitCatalog = limitCatalog
             };
             var json = JsonSerializer.Serialize(payload, DeploymentJson.CompactOptions);
             return EncryptionUtils.ASymmetric.Envelope.Prepare(json, input.PrivateKey, input.Key);
